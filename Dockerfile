@@ -22,9 +22,10 @@ COPY . .
 RUN composer dump-autoload --optimize --no-interaction
 
 # Laravel caches (ignore failures on first build)
-RUN php artisan key:generate --force || true \
- && php artisan config:cache || true \
- && php artisan route:cache || true \
+# Note: config:cache is NOT run here because environment variables aren't available during build
+# Config will be read fresh from environment variables at runtime
+# Only cache routes and views (these don't depend on env vars)
+RUN php artisan route:cache || true \
  && php artisan view:cache || true
 
 # FrankenPHP configuration
