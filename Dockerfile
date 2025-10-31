@@ -11,11 +11,15 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /app
 
 # Composer dependencies (cache layer)
+# Install without scripts first (artisan not available yet)
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress --no-scripts
 
 # App code
 COPY . .
+
+# Run composer scripts now that artisan is available
+RUN composer dump-autoload --optimize --no-interaction --no-progress
 
 # Laravel caches (ignore failures on first build)
 RUN php artisan key:generate --force || true \
