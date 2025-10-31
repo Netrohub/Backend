@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Listing;
 use App\Models\KycVerification;
 use Illuminate\Http\Request;
+use App\Http\Controllers\MessageHelper;
 
 class AdminController extends Controller
 {
@@ -15,7 +16,7 @@ class AdminController extends Controller
     {
         $this->middleware(function ($request, $next) {
             if (!$request->user()->isAdmin()) {
-                return response()->json(['message' => 'Unauthorized'], 403);
+                return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
             }
             return $next($request);
         });
@@ -33,24 +34,35 @@ class AdminController extends Controller
 
     public function updateUser(Request $request, $id)
     {
-        $user = User::findOrFail($id);
-
         $validated = $request->validate([
             'role' => 'sometimes|in:user,admin',
             'is_verified' => 'sometimes|boolean',
+            'name' => 'sometimes|string|max:255',
+            'email' => 'sometimes|email|max:255|unique:users,email,' . $id,
         ]);
 
+        $user = User::findOrFail($id);
         $user->update($validated);
 
-        return response()->json($user);
+        return response()->json($user->load(['wallet', 'kycVerification']));
     }
 
-    public function deleteUser($id)
+    public function deleteUser(Request $request, $id)
     {
+        $validated = $request->validate([
+            'confirm' => 'sometimes|boolean',
+        ]);
+
         $user = User::findOrFail($id);
+        
+        // Prevent admin from deleting themselves
+        if ($user->id === $request->user()->id) {
+            return response()->json(['message' => MessageHelper::ADMIN_CANNOT_DELETE_SELF], 400);
+        }
+
         $user->delete();
 
-        return response()->json(['message' => 'User deleted']);
+        return response()->json(['message' => MessageHelper::ADMIN_USER_DELETED]);
     }
 
     public function disputes(Request $request)

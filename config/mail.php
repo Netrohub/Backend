@@ -14,6 +14,24 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Default Mailer
+    |--------------------------------------------------------------------------
+    |
+    | Options: 'smtp', 'sendmail', 'mailgun', 'ses', 'postmark', 'resend', 'log', 'array'
+    | 
+    | For production, configure SMTP or use a service like Mailgun/SES/Postmark.
+    | Required environment variables for SMTP:
+    |   - MAIL_MAILER=smtp
+    |   - MAIL_HOST=your-smtp-host
+    |   - MAIL_PORT=587 (or 465 for SSL)
+    |   - MAIL_USERNAME=your-email@domain.com
+    |   - MAIL_PASSWORD=your-password
+    |   - MAIL_FROM_ADDRESS=noreply@nxoland.com
+    |   - MAIL_FROM_NAME="NXOLand"
+    |
+    */
     'default' => env('MAIL_MAILER', 'log'),
 
     /*

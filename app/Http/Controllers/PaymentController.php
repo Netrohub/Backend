@@ -9,6 +9,7 @@ use App\Models\Wallet;
 use App\Services\TapPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\MessageHelper;
 
 class PaymentController extends Controller
 {
@@ -25,11 +26,11 @@ class PaymentController extends Controller
         $order = Order::findOrFail($validated['order_id']);
 
         if ($order->buyer_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
         }
 
         if ($order->status !== 'pending') {
-            return response()->json(['message' => 'Order is not in pending status'], 400);
+            return response()->json(['message' => MessageHelper::ORDER_NOT_PENDING], 400);
         }
 
         // Ensure buyer has sufficient balance (if wallet-based payment)
@@ -56,26 +57,34 @@ class PaymentController extends Controller
             ],
         ];
 
-        $tapResponse = $this->tapService->createCharge($chargeData);
+        // Wrap payment creation in transaction for data consistency
+        $result = DB::transaction(function () use ($order, $chargeData, $request) {
+            $tapResponse = $this->tapService->createCharge($chargeData);
 
-        if (!isset($tapResponse['id'])) {
-            return response()->json(['message' => 'Failed to create payment'], 500);
-        }
+            if (!isset($tapResponse['id'])) {
+                throw new \Exception(MessageHelper::PAYMENT_CREATE_FAILED);
+            }
 
-        // Create payment record
-        $payment = Payment::create([
-            'order_id' => $order->id,
-            'tap_charge_id' => $tapResponse['id'],
-            'tap_reference' => $tapResponse['reference'] ?? null,
-            'status' => 'initiated',
-            'amount' => $order->amount,
-            'currency' => 'SAR',
-            'tap_response' => $tapResponse,
-        ]);
+            // Create payment record
+            $payment = Payment::create([
+                'order_id' => $order->id,
+                'tap_charge_id' => $tapResponse['id'],
+                'tap_reference' => $tapResponse['reference'] ?? null,
+                'status' => 'initiated',
+                'amount' => $order->amount,
+                'currency' => 'SAR',
+                'tap_response' => $tapResponse,
+            ]);
 
-        // Update order
-        $order->tap_charge_id = $tapResponse['id'];
-        $order->save();
+            // Update order
+            $order->tap_charge_id = $tapResponse['id'];
+            $order->save();
+
+            return ['payment' => $payment, 'tapResponse' => $tapResponse];
+        });
+
+        $payment = $result['payment'];
+        $tapResponse = $result['tapResponse'];
 
         return response()->json([
             'payment' => $payment,

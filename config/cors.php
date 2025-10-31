@@ -20,8 +20,11 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
+        // Production domains
         'https://nxoland.com',
         'https://www.nxoland.com',
+        // Development/staging (from environment variable)
+        // Make sure to set FRONTEND_URL in production (.env file)
         env('FRONTEND_URL', 'http://localhost:5173'),
     ],
 

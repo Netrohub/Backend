@@ -14,9 +14,11 @@ use App\Http\Controllers\WebhookController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
-// Public routes
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+// Public routes with rate limiting for authentication endpoints
+Route::middleware('throttle:5,1')->group(function () {
+    Route::post('/register', [AuthController::class, 'register']);
+    Route::post('/login', [AuthController::class, 'login']);
+});
 Route::get('/leaderboard', [LeaderboardController::class, 'index']);
 Route::get('/members', [MemberController::class, 'index']);
 Route::get('/members/{id}', [MemberController::class, 'show']);
@@ -50,6 +52,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Payments
     Route::post('/payments/create', [PaymentController::class, 'create']);
+    
+    // Payment callback (handled by frontend, but route exists for reference)
+    // Frontend should handle: /orders/{id}/payment/callback
+    // This route would be in web.php if backend needs to handle callback
 
     // Admin routes
     Route::prefix('admin')->group(function () {

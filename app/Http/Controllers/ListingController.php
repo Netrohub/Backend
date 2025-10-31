@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Listing;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use App\Http\Controllers\MessageHelper;
 
 class ListingController extends Controller
 {
@@ -68,7 +69,7 @@ class ListingController extends Controller
         $listing = Listing::findOrFail($id);
 
         if ($listing->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
         }
 
         $validated = $request->validate([
@@ -91,11 +92,11 @@ class ListingController extends Controller
         $listing = Listing::findOrFail($id);
 
         if ($listing->user_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
         }
 
         $listing->delete();
 
-        return response()->json(['message' => 'Listing deleted successfully']);
+        return response()->json(['message' => 'Listing deleted successfully.']);
     }
 }
