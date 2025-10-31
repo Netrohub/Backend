@@ -12,6 +12,8 @@ class MessageHelper
     public const AUTH_INVALID_CREDENTIALS = 'The provided credentials are incorrect.';
     public const AUTH_UNAUTHORIZED = 'Unauthorized access.';
     public const AUTH_EMAIL_NOT_VERIFIED = 'Your email address is not verified.';
+    public const REGISTRATION_ERROR = 'An error occurred during registration. Please try again.';
+    public const LOGIN_ERROR = 'An error occurred during login. Please try again.';
     
     // General error messages
     public const ERROR_UNAUTHORIZED = 'Unauthorized.';

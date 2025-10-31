@@ -49,10 +49,12 @@ class AuthController extends Controller
             throw $e;
         } catch (\Exception $e) {
             Log::error('Registration error: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
             return response()->json([
-                'message' => MessageHelper::ERROR_SERVER_ERROR,
+                'message' => MessageHelper::REGISTRATION_ERROR,
                 'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
@@ -84,10 +86,12 @@ class AuthController extends Controller
             throw $e;
         } catch (\Exception $e) {
             Log::error('Login error: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
             return response()->json([
-                'message' => MessageHelper::ERROR_SERVER_ERROR,
+                'message' => MessageHelper::LOGIN_ERROR,
                 'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
