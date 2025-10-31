@@ -13,9 +13,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         // CORS middleware must be registered explicitly for API routes
+        // Note: EnsureFrontendRequestsAreStateful is removed because we're using Bearer tokens, not cookies
+        // For Bearer token authentication, CSRF protection is not needed
         $middleware->api(prepend: [
             \App\Http\Middleware\HandleCors::class,
-            \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+            // \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class, // Removed - using Bearer tokens, not cookies
         ]);
         
         $middleware->alias([
