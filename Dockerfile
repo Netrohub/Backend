@@ -27,11 +27,11 @@ RUN php artisan key:generate --force || true \
  && php artisan route:cache || true \
  && php artisan view:cache || true
 
-# FrankenPHP will serve /public on port 8080
+# FrankenPHP configuration
 ENV SERVER_NAME=:8080
 EXPOSE 8080
 
-# Default command for the web service
-# FrankenPHP runs via php-fpm with worker mode
+# Default command - Use php-fpm which FrankenPHP extends
+# FrankenPHP image includes php-fpm configured to work with Caddy
 CMD ["php-fpm"]
 
