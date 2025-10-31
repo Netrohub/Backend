@@ -5,6 +5,9 @@ FROM dunglas/frankenphp:1.1-php8.3
 RUN install-php-extensions \
     pdo_pgsql opcache intl gd zip bcmath pcntl exif
 
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
 WORKDIR /app
 
 # Composer dependencies (cache layer)
