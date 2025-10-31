@@ -31,8 +31,13 @@ RUN php artisan key:generate --force || true \
 ENV SERVER_NAME=:8080
 EXPOSE 8080
 
-# Default command - Start php-fpm in foreground
-# Render's proxy will route to php-fpm on port 9000
-# FrankenPHP will be used via php-fpm worker mode
-CMD ["php-fpm", "-F", "-y", "/usr/local/etc/php-fpm.d/www.conf"]
+# Copy Caddyfile
+COPY Caddyfile /etc/caddy/Caddyfile
+
+# Default command - Use Caddy with FrankenPHP
+# Find caddy binary location and use it
+RUN which caddy || find /usr -name caddy 2>/dev/null || echo "caddy not found" && \
+    ls -la /usr/local/bin/ | grep -i caddy || echo "caddy not in /usr/local/bin"
+
+CMD ["sh", "-c", "if command -v caddy >/dev/null 2>&1; then caddy run --config /etc/caddy/Caddyfile; elif [ -f /usr/local/bin/caddy ]; then /usr/local/bin/caddy run --config /etc/caddy/Caddyfile; else php-fpm -F; fi"]
 
