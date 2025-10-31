@@ -29,15 +29,10 @@ RUN php artisan key:generate --force || true \
 
 # FrankenPHP configuration
 ENV SERVER_NAME=:8080
+ENV PORT=8080
 EXPOSE 8080
 
-# Copy Caddyfile
-COPY Caddyfile /etc/caddy/Caddyfile
-
-# Default command - Use Caddy with FrankenPHP
-# Find caddy binary location and use it
-RUN which caddy || find /usr -name caddy 2>/dev/null || echo "caddy not found" && \
-    ls -la /usr/local/bin/ | grep -i caddy || echo "caddy not in /usr/local/bin"
-
-CMD ["sh", "-c", "if command -v caddy >/dev/null 2>&1; then caddy run --config /etc/caddy/Caddyfile; elif [ -f /usr/local/bin/caddy ]; then /usr/local/bin/caddy run --config /etc/caddy/Caddyfile; else php-fpm -F; fi"]
+# Default command - Use Laravel's built-in server for Render compatibility
+# Render will route HTTP traffic to port 8080
+CMD php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
 
