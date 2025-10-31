@@ -19,7 +19,7 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progre
 COPY . .
 
 # Run composer scripts now that artisan is available
-RUN composer dump-autoload --optimize --no-interaction --no-progress
+RUN composer dump-autoload --optimize --no-interaction
 
 # Laravel caches (ignore failures on first build)
 RUN php artisan key:generate --force || true \
