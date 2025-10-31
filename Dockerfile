@@ -29,10 +29,11 @@ RUN php artisan key:generate --force || true \
 
 # FrankenPHP configuration
 ENV SERVER_NAME=:8080
+ENV FRANKENPHP_CONFIG="worker /usr/local/bin/php"
 EXPOSE 8080
 
-# Default command - Use php-fpm in foreground mode
-# Render will handle routing through php-fpm
-# The SERVER_NAME env var tells FrankenPHP to listen on port 8080
-CMD ["php-fpm", "-F"]
+# Default command - Use the entrypoint script which starts Caddy
+# The entrypoint script from the base image will handle starting Caddy + PHP-FPM
+ENTRYPOINT ["docker-php-entrypoint"]
+CMD ["php-fpm"]
 
