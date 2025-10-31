@@ -32,5 +32,5 @@ ENV SERVER_NAME=:8080
 EXPOSE 8080
 
 # Default command for the web service
-CMD ["frankenphp", "run", "--workers=4", "--static", "/app/public"]
+CMD ["/usr/local/bin/frankenphp", "run", "--workers=4", "--static", "/app/public"]
 
