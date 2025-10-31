@@ -32,5 +32,6 @@ ENV SERVER_NAME=:8080
 EXPOSE 8080
 
 # Default command for the web service
-CMD ["/usr/local/bin/frankenphp", "run", "--workers=4", "--static", "/app/public"]
+# FrankenPHP runs via php-fpm with worker mode
+CMD ["php-fpm"]
 
