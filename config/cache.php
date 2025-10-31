@@ -15,7 +15,16 @@ return [
     |
     */
 
-    'default' => env('CACHE_STORE', 'database'),
+    /*
+    |--------------------------------------------------------------------------
+    | Default Cache Store
+    |--------------------------------------------------------------------------
+    |
+    | For production, use 'database' or 'redis'. For local development, 'file' is fine.
+    | Set CACHE_DRIVER or CACHE_STORE environment variable to override.
+    |
+    */
+    'default' => env('CACHE_DRIVER', env('CACHE_STORE', 'file')),
 
     /*
     |--------------------------------------------------------------------------
@@ -44,7 +53,7 @@ return [
             'connection' => env('DB_CACHE_CONNECTION'),
             'table' => env('DB_CACHE_TABLE', 'cache'),
             'lock_connection' => env('DB_CACHE_LOCK_CONNECTION'),
-            'lock_table' => env('DB_CACHE_LOCK_TABLE'),
+            'lock_table' => env('DB_CACHE_LOCK_TABLE', 'cache_locks'),
         ],
 
         'file' => [

@@ -19,14 +19,17 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
+    'allowed_origins' => array_filter([
         // Production domains
         'https://nxoland.com',
         'https://www.nxoland.com',
         // Development/staging (from environment variable)
         // Make sure to set FRONTEND_URL in production (.env file)
-        env('FRONTEND_URL', 'http://localhost:5173'),
-    ],
+        env('FRONTEND_URL'),
+        // Always allow localhost for development
+        'http://localhost:5173',
+        'http://localhost:3000',
+    ]),
 
     'allowed_origins_patterns' => [],
 
@@ -34,6 +37,15 @@ return [
 
     'exposed_headers' => [],
 
+    /*
+    |--------------------------------------------------------------------------
+    | CORS Preflight Options
+    |--------------------------------------------------------------------------
+    |
+    | Determines how long the browser can cache preflight OPTIONS requests.
+    | Set to 0 to disable caching.
+    |
+    */
     'max_age' => 0,
 
     'supports_credentials' => true,

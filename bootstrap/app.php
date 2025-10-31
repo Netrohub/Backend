@@ -12,6 +12,8 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // CORS is handled automatically by Laravel 11 if config/cors.php exists
+        // Ensure CORS middleware is enabled for API routes
         $middleware->api(prepend: [
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
@@ -23,10 +25,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // Rate limiting
         $middleware->throttleApi();
         
-        // Trust proxies for HTTPS
+        // Trust proxies for HTTPS (required for CORS to work correctly behind proxies)
         $middleware->trustProxies(at: '*');
         
-        // Security headers
+        // Security headers (must come after CORS to not interfere)
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

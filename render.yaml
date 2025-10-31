@@ -19,5 +19,7 @@ services:
         value: database
       - key: SESSION_DRIVER
         value: database
+      - key: FRONTEND_URL
+        value: https://nxoland.com
     healthCheckPath: /up
 
