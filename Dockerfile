@@ -31,7 +31,16 @@ RUN php artisan key:generate --force || true \
 ENV SERVER_NAME=:8080
 EXPOSE 8080
 
-# Default command - Use php-fpm which FrankenPHP extends
-# FrankenPHP image includes php-fpm configured to work with Caddy
-CMD ["php-fpm"]
+# Create Caddyfile for FrankenPHP
+RUN mkdir -p /etc/caddy && \
+    echo ":8080 {" > /etc/caddy/Caddyfile && \
+    echo "  root * /app/public" >> /etc/caddy/Caddyfile && \
+    echo "  encode zstd gzip" >> /etc/caddy/Caddyfile && \
+    echo "  php_server" >> /etc/caddy/Caddyfile && \
+    echo "  try_files {path} /index.php?{query}" >> /etc/caddy/Caddyfile && \
+    echo "  file_server" >> /etc/caddy/Caddyfile && \
+    echo "}" >> /etc/caddy/Caddyfile
+
+# Default command - Caddy runs FrankenPHP
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
 
