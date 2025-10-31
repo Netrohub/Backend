@@ -12,9 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // CORS is handled automatically by Laravel 11 if config/cors.php exists
-        // Ensure CORS middleware is enabled for API routes
+        // CORS middleware must be registered explicitly for API routes
         $middleware->api(prepend: [
+            \App\Http\Middleware\HandleCors::class,
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
         ]);
         
