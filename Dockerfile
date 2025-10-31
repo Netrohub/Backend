@@ -41,6 +41,7 @@ RUN mkdir -p /etc/caddy && \
     echo "  file_server" >> /etc/caddy/Caddyfile && \
     echo "}" >> /etc/caddy/Caddyfile
 
-# Default command - Caddy runs FrankenPHP
-CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile"]
+# Default command - Start php-fpm in foreground mode
+# FrankenPHP/Caddy will be started by the entrypoint script
+CMD ["php-fpm", "-F"]
 
