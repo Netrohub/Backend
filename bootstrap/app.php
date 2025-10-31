@@ -17,11 +17,13 @@ return Application::configure(basePath: dirname(__DIR__))
         // For Bearer token authentication, CSRF protection is not needed
         $middleware->api(prepend: [
             \App\Http\Middleware\HandleCors::class,
+            \App\Http\Middleware\AddRequestId::class, // Add request correlation ID
             // \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class, // Removed - using Bearer tokens, not cookies
         ]);
         
         $middleware->alias([
             'verified' => \App\Http\Middleware\EnsureEmailIsVerified::class,
+            'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
         ]);
 
         // Rate limiting - throttleApi() requires a rate limiter named 'api' to be defined

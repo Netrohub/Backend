@@ -8,6 +8,8 @@ use App\Models\Wallet;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\MessageHelper;
+use App\Helpers\PaginationHelper;
+use App\Helpers\AuditHelper;
 
 class DisputeController extends Controller
 {
@@ -15,13 +17,15 @@ class DisputeController extends Controller
     {
         $user = $request->user();
         
-        $disputes = Dispute::with(['order', 'initiator', 'resolver'])
-            ->whereHas('order', function($query) use ($user) {
-                $query->where('buyer_id', $user->id)
-                      ->orWhere('seller_id', $user->id);
-            })
-            ->orderBy('created_at', 'desc')
-            ->paginate(20);
+        $disputes = PaginationHelper::paginate(
+            Dispute::with(['order', 'initiator', 'resolver'])
+                ->whereHas('order', function($query) use ($user) {
+                    $query->where('buyer_id', $user->id)
+                          ->orWhere('seller_id', $user->id);
+                })
+                ->orderBy('created_at', 'desc'),
+            $request
+        );
 
         return response()->json($disputes);
     }
@@ -65,6 +69,10 @@ class DisputeController extends Controller
         $order->status = 'disputed';
         $order->save();
 
+        // Send notifications to buyer and seller
+        $order->buyer->notify(new DisputeCreated($dispute));
+        $order->seller->notify(new DisputeCreated($dispute));
+
         return response()->json($dispute->load(['order', 'initiator']), 201);
     }
 
@@ -100,6 +108,7 @@ class DisputeController extends Controller
             'resolution' => 'required_if:status,resolved|in:refund_buyer,release_to_seller',
         ]);
 
+        $oldStatus = $dispute->status;
         $dispute->status = $validated['status'];
         $dispute->resolved_by = $user->id;
         $dispute->resolved_at = now();
@@ -109,6 +118,27 @@ class DisputeController extends Controller
         }
 
         $dispute->save();
+
+        // Audit log for dispute resolution
+        AuditHelper::log(
+            'dispute.resolve',
+            Dispute::class,
+            $dispute->id,
+            ['status' => $oldStatus],
+            [
+                'status' => $validated['status'],
+                'resolution' => $validated['resolution'] ?? null,
+                'resolved_by' => $user->id,
+            ],
+            $request
+        );
+
+        // Send notifications when dispute is resolved
+        if ($validated['status'] === 'resolved' && isset($validated['resolution'])) {
+            $order = $dispute->order;
+            $order->buyer->notify(new DisputeResolved($dispute, $validated['resolution']));
+            $order->seller->notify(new DisputeResolved($dispute, $validated['resolution']));
+        }
 
         // If resolved, release or refund funds based on resolution
         if ($validated['status'] === 'resolved' && isset($validated['resolution'])) {

@@ -53,8 +53,23 @@ class AuthController extends Controller
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
+            
+            // Provide more specific error message without exposing sensitive details
+            $errorCode = 'REGISTRATION_FAILED';
+            $userMessage = MessageHelper::REGISTRATION_ERROR;
+            
+            // Check for common error types to provide better feedback
+            if (str_contains($e->getMessage(), 'SQLSTATE') || str_contains($e->getMessage(), 'database')) {
+                $errorCode = 'DATABASE_ERROR';
+                $userMessage = 'Unable to complete registration. Please try again later.';
+            } elseif (str_contains($e->getMessage(), 'email') || str_contains($e->getMessage(), 'unique')) {
+                $errorCode = 'EMAIL_EXISTS';
+                // This should be caught by validation, but handle gracefully
+            }
+            
             return response()->json([
-                'message' => MessageHelper::REGISTRATION_ERROR,
+                'message' => $userMessage,
+                'error_code' => $errorCode,
                 'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
@@ -90,8 +105,20 @@ class AuthController extends Controller
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
+            
+            // Provide more specific error message without exposing sensitive details
+            $errorCode = 'LOGIN_FAILED';
+            $userMessage = MessageHelper::LOGIN_ERROR;
+            
+            // Check for common error types to provide better feedback
+            if (str_contains($e->getMessage(), 'SQLSTATE') || str_contains($e->getMessage(), 'database')) {
+                $errorCode = 'DATABASE_ERROR';
+                $userMessage = 'Unable to complete login. Please try again later.';
+            }
+            
             return response()->json([
-                'message' => MessageHelper::LOGIN_ERROR,
+                'message' => $userMessage,
+                'error_code' => $errorCode,
                 'error' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }

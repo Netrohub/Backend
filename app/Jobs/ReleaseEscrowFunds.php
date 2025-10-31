@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Order;
 use App\Models\Wallet;
+use App\Notifications\OrderStatusChanged;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -44,15 +45,15 @@ class ReleaseEscrowFunds implements ShouldQueue
                     ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                 );
 
-            // Validate escrow balance
+            // Validate escrow balance - throw exception to trigger rollback if insufficient
             if ($buyerWallet->on_hold_balance < $order->amount) {
-                Log::warning('Insufficient escrow balance for release', [
+                Log::error('Insufficient escrow balance for release', [
                     'order_id' => $this->orderId,
                     'buyer_id' => $order->buyer_id,
                     'required' => $order->amount,
                     'available' => $buyerWallet->on_hold_balance,
                 ]);
-                return;
+                throw new \Exception('Insufficient escrow balance for release. Order requires manual review.');
             }
 
             // Release from buyer's escrow
@@ -70,9 +71,14 @@ class ReleaseEscrowFunds implements ShouldQueue
             $sellerWallet->save();
 
             // Update order status
+            $oldStatus = $order->status;
             $order->status = 'completed';
             $order->completed_at = now();
             $order->save();
+            
+            // Send notifications to buyer and seller
+            $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'completed'));
+            $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'completed'));
         });
 
         Log::info('Escrow funds released', [

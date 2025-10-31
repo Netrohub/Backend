@@ -50,6 +50,19 @@ class Order extends Model
     {
         return $this->belongsTo(User::class, 'seller_id');
     }
+    
+    /**
+     * Get orders only from active users (non-deleted buyers and sellers)
+     * Use this scope when displaying orders to exclude those involving deleted users
+     */
+    public function scopeWithActiveUsers($query)
+    {
+        return $query->whereHas('buyer', function ($q) {
+            $q->withoutTrashed();
+        })->whereHas('seller', function ($q) {
+            $q->withoutTrashed();
+        });
+    }
 
     public function dispute()
     {

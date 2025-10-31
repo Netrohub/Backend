@@ -44,4 +44,17 @@ class Dispute extends Model
     {
         return $this->belongsTo(User::class, 'resolved_by');
     }
+    
+    /**
+     * Get disputes only from active users and orders
+     * Use this scope when displaying disputes to exclude those involving deleted users/orders
+     */
+    public function scopeWithActiveRelations($query)
+    {
+        return $query->whereHas('order', function ($q) {
+            $q->withoutTrashed();
+        })->whereHas('initiator', function ($q) {
+            $q->withoutTrashed();
+        });
+    }
 }

@@ -35,6 +35,17 @@ class Listing extends Model
     {
         return $this->belongsTo(User::class);
     }
+    
+    /**
+     * Get listings only from non-deleted users
+     * Use this scope when displaying public listings to exclude those from deleted users
+     */
+    public function scopeFromActiveUsers($query)
+    {
+        return $query->whereHas('user', function ($q) {
+            $q->withoutTrashed();
+        });
+    }
 
     public function orders()
     {

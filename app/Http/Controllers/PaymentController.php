@@ -57,38 +57,65 @@ class PaymentController extends Controller
             ],
         ];
 
-        // Wrap payment creation in transaction for data consistency
-        $result = DB::transaction(function () use ($order, $chargeData, $request) {
-            $tapResponse = $this->tapService->createCharge($chargeData);
+        try {
+            // Wrap payment creation in transaction for data consistency
+            $result = DB::transaction(function () use ($order, $chargeData, $request) {
+                $tapResponse = $this->tapService->createCharge($chargeData);
 
-            if (!isset($tapResponse['id'])) {
-                throw new \Exception(MessageHelper::PAYMENT_CREATE_FAILED);
+                if (!isset($tapResponse['id'])) {
+                    $errorMessage = $tapResponse['message'] ?? MessageHelper::PAYMENT_CREATE_FAILED;
+                    throw new \Exception($errorMessage);
+                }
+
+                // Create payment record
+                $payment = Payment::create([
+                    'order_id' => $order->id,
+                    'tap_charge_id' => $tapResponse['id'],
+                    'tap_reference' => $tapResponse['reference'] ?? null,
+                    'status' => 'initiated',
+                    'amount' => $order->amount,
+                    'currency' => 'SAR',
+                    'tap_response' => $tapResponse,
+                ]);
+
+                // Update order
+                $order->tap_charge_id = $tapResponse['id'];
+                $order->save();
+
+                return ['payment' => $payment, 'tapResponse' => $tapResponse];
+            });
+
+            $payment = $result['payment'];
+            $tapResponse = $result['tapResponse'];
+
+            return response()->json([
+                'payment' => $payment,
+                'redirect_url' => $tapResponse['transaction']['url'] ?? null,
+            ]);
+        } catch (\Exception $e) {
+            // Determine error code based on exception message
+            $errorCode = 'PAYMENT_CREATE_FAILED';
+            $userMessage = MessageHelper::PAYMENT_CREATE_FAILED;
+            
+            if (str_contains($e->getMessage(), 'network') || str_contains($e->getMessage(), 'timeout')) {
+                $errorCode = 'PAYMENT_NETWORK_ERROR';
+                $userMessage = 'Unable to connect to payment gateway. Please try again.';
+            } elseif (str_contains($e->getMessage(), 'invalid') || str_contains($e->getMessage(), 'validation')) {
+                $errorCode = 'PAYMENT_INVALID_DATA';
+                $userMessage = 'Invalid payment data provided. Please check your information.';
             }
 
-            // Create payment record
-            $payment = Payment::create([
+            \Illuminate\Support\Facades\Log::error('Payment creation failed', [
                 'order_id' => $order->id,
-                'tap_charge_id' => $tapResponse['id'],
-                'tap_reference' => $tapResponse['reference'] ?? null,
-                'status' => 'initiated',
-                'amount' => $order->amount,
-                'currency' => 'SAR',
-                'tap_response' => $tapResponse,
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
             ]);
 
-            // Update order
-            $order->tap_charge_id = $tapResponse['id'];
-            $order->save();
-
-            return ['payment' => $payment, 'tapResponse' => $tapResponse];
-        });
-
-        $payment = $result['payment'];
-        $tapResponse = $result['tapResponse'];
-
-        return response()->json([
-            'payment' => $payment,
-            'redirect_url' => $tapResponse['transaction']['url'] ?? null,
-        ]);
+            return response()->json([
+                'message' => $userMessage,
+                'error_code' => $errorCode,
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
     }
 }

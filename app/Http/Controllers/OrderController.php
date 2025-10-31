@@ -6,9 +6,12 @@ use App\Jobs\ReleaseEscrowFunds;
 use App\Models\Listing;
 use App\Models\Order;
 use App\Models\Wallet;
+use App\Notifications\OrderStatusChanged;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\MessageHelper;
+use App\Helpers\PaginationHelper;
+use App\Helpers\AuditHelper;
 
 class OrderController extends Controller
 {
@@ -16,13 +19,15 @@ class OrderController extends Controller
     {
         $user = $request->user();
         
-        $orders = Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
-            ->where(function($query) use ($user) {
-                $query->where('buyer_id', $user->id)
-                      ->orWhere('seller_id', $user->id);
-            })
-            ->orderBy('created_at', 'desc')
-            ->paginate(20);
+        $orders = PaginationHelper::paginate(
+            Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
+                ->where(function($query) use ($user) {
+                    $query->where('buyer_id', $user->id)
+                          ->orWhere('seller_id', $user->id);
+                })
+                ->orderBy('created_at', 'desc'),
+            $request
+        );
 
         return response()->json($orders);
     }
@@ -41,22 +46,49 @@ class OrderController extends Controller
         }
 
         if ($listing->status !== 'active') {
-            return response()->json(['message' => MessageHelper::ORDER_NOT_AVAILABLE], 400);
+            return response()->json([
+                'message' => MessageHelper::ORDER_NOT_AVAILABLE,
+                'error_code' => 'LISTING_NOT_AVAILABLE',
+            ], 400);
         }
 
-        // Wrap order creation in transaction for data consistency
-        $order = DB::transaction(function () use ($validated, $listing, $request) {
-            return Order::create([
+        try {
+            // Wrap order creation in transaction for data consistency
+            $order = DB::transaction(function () use ($validated, $listing, $request) {
+                return Order::create([
+                    'listing_id' => $listing->id,
+                    'buyer_id' => $request->user()->id,
+                    'seller_id' => $listing->user_id,
+                    'amount' => $listing->price,
+                    'status' => 'pending',
+                    'notes' => $validated['notes'] ?? null,
+                ]);
+            });
+
+            return response()->json($order->load(['listing', 'buyer', 'seller']), 201);
+        } catch (\Exception $e) {
+            $errorCode = 'ORDER_CREATE_FAILED';
+            $userMessage = 'Failed to create order. Please try again.';
+            
+            if (str_contains($e->getMessage(), 'SQLSTATE') || str_contains($e->getMessage(), 'database')) {
+                $errorCode = 'ORDER_DATABASE_ERROR';
+                $userMessage = 'Unable to create order due to a database error. Please try again later.';
+            }
+
+            \Illuminate\Support\Facades\Log::error('Order creation failed', [
                 'listing_id' => $listing->id,
                 'buyer_id' => $request->user()->id,
-                'seller_id' => $listing->user_id,
-                'amount' => $listing->price,
-                'status' => 'pending',
-                'notes' => $validated['notes'] ?? null,
+                'error' => $e->getMessage(),
+                'error_code' => $errorCode,
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
             ]);
-        });
 
-        return response()->json($order->load(['listing', 'buyer', 'seller']), 201);
+            return response()->json([
+                'message' => $userMessage,
+                'error_code' => $errorCode,
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
     }
 
     public function show(Request $request, $id)
@@ -110,7 +142,23 @@ class OrderController extends Controller
                 });
             }
 
+            $oldStatus = $order->status;
             $order->status = 'cancelled';
+            $order->save();
+            
+            // Audit log for order cancellation
+            AuditHelper::log(
+                'order.cancelled',
+                Order::class,
+                $order->id,
+                ['status' => $oldStatus],
+                ['status' => 'cancelled'],
+                $request
+            );
+            
+            // Send notifications to buyer and seller
+            $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'cancelled'));
+            $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'cancelled'));
         }
 
         if (isset($validated['notes'])) {
