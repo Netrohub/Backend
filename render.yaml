@@ -13,6 +13,8 @@ services:
         value: error
       - key: DB_CONNECTION
         value: pgsql
+      # Note: DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD must be set in Render Dashboard
+      # as environment variables (not in render.yaml) since they're sensitive
       - key: CACHE_DRIVER
         value: database
       - key: QUEUE_CONNECTION
