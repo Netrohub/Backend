@@ -35,6 +35,10 @@ Route::prefix('v1')->group(function () {
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/members', [MemberController::class, 'index']);
     Route::get('/members/{id}', [MemberController::class, 'show']);
+    
+    // Listings (public - anyone can browse, but creating/updating requires auth)
+    Route::get('/listings', [ListingController::class, 'index']);
+    Route::get('/listings/{id}', [ListingController::class, 'show']);
 
     // Webhooks (no auth required, but rate limited by IP)
     // Rate limit: 60 requests per minute per IP to prevent DoS attacks
@@ -51,14 +55,12 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
 
-        // Listings (require email verification)
+        // Listings (require email verification for creating/updating/deleting)
         Route::middleware('verified')->group(function () {
             Route::post('/listings', [ListingController::class, 'store']);
             Route::put('/listings/{id}', [ListingController::class, 'update']);
             Route::delete('/listings/{id}', [ListingController::class, 'destroy']);
         });
-        Route::get('/listings', [ListingController::class, 'index']);
-        Route::get('/listings/{id}', [ListingController::class, 'show']);
 
         // Orders (require email verification for creation)
         Route::middleware('verified')->group(function () {
