@@ -90,6 +90,28 @@ class PersonaService
         return $response->json();
     }
 
+    /**
+     * Verify that the template exists in the environment
+     * This can help diagnose "Record not found" errors
+     */
+    public function verifyTemplate(): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Persona-Version' => '2024-02-05',
+            ])->get($this->baseUrl . '/templates/' . $this->templateId);
+
+            return $response->json();
+        } catch (\Exception $e) {
+            Log::error('Persona Template Verification Failed', [
+                'template_id' => $this->templateId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
     public function verifyWebhookSignature(array $payload, string $signature): bool
     {
         $calculatedSignature = hash_hmac('sha256', json_encode($payload), config('services.persona.webhook_secret'));
