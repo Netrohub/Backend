@@ -83,6 +83,7 @@ Route::prefix('v1')->group(function () {
         // KYC
         Route::get('/kyc', [KycController::class, 'index']);
         Route::post('/kyc', [KycController::class, 'create']);
+        Route::post('/kyc/sync', [KycController::class, 'sync']); // Manual sync from Persona
         Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig']); // Diagnostic endpoint
         
         // Payment callback (handled by frontend, but route exists for reference)

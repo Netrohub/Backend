@@ -110,6 +110,80 @@ class KycController extends Controller
     }
 
     /**
+     * Sync KYC status from Persona API
+     * Useful when webhooks don't arrive or need manual refresh
+     */
+    public function sync(Request $request)
+    {
+        $user = $request->user();
+        
+        // Get existing KYC record
+        $kyc = KycVerification::where('user_id', $user->id)->first();
+        
+        if (!$kyc || !$kyc->persona_inquiry_id) {
+            return response()->json([
+                'message' => 'No KYC inquiry found. Please start verification first.',
+            ], 404);
+        }
+
+        try {
+            // Retrieve inquiry status from Persona
+            $inquiryData = $this->personaService->retrieveInquiry($kyc->persona_inquiry_id);
+            
+            $status = $inquiryData['data']['attributes']['status'] ?? null;
+            
+            if (!$status) {
+                return response()->json([
+                    'message' => 'Could not retrieve inquiry status from Persona',
+                ], 500);
+            }
+
+            // Update KYC status based on Persona status
+            $oldStatus = $kyc->status;
+            $kyc->status = match($status) {
+                'completed.approved' => 'verified',
+                'completed.declined' => 'failed',
+                'expired' => 'expired',
+                default => 'pending',
+            };
+
+            if ($kyc->status === 'verified' && $oldStatus !== 'verified') {
+                $kyc->verified_at = now();
+                
+                // Update user verification status
+                $user->is_verified = true;
+                $user->save();
+                
+                // Send verification notification
+                $user->notify(new \App\Notifications\KycVerified($kyc, true));
+            } elseif (($kyc->status === 'failed' || $kyc->status === 'expired') && $oldStatus !== $kyc->status) {
+                // Send notification for failed/expired KYC
+                $user->notify(new \App\Notifications\KycVerified($kyc, false));
+            }
+
+            $kyc->persona_data = array_merge($kyc->persona_data ?? [], $inquiryData);
+            $kyc->save();
+
+            return response()->json([
+                'kyc' => $kyc,
+                'synced' => true,
+                'status' => $kyc->status,
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('KYC Sync Error', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'message' => 'Failed to sync KYC status',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Diagnostic endpoint to verify Persona configuration
      * This helps troubleshoot "Record not found" errors
      */
