@@ -97,15 +97,62 @@ class PersonaService
     public function verifyTemplate(): array
     {
         try {
+            Log::info('Persona Template Verification Request', [
+                'template_id' => $this->templateId,
+                'url' => $this->baseUrl . '/templates/' . $this->templateId,
+            ]);
+
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Persona-Version' => '2024-02-05',
             ])->get($this->baseUrl . '/templates/' . $this->templateId);
 
-            return $response->json();
+            $responseData = $response->json();
+            
+            Log::info('Persona Template Verification Response', [
+                'status_code' => $response->status(),
+                'response' => $responseData,
+            ]);
+
+            if ($response->failed()) {
+                throw new \RuntimeException('Template not found: ' . ($responseData['errors'][0]['title'] ?? 'Unknown error'));
+            }
+
+            return $responseData;
         } catch (\Exception $e) {
             Log::error('Persona Template Verification Failed', [
                 'template_id' => $this->templateId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * List all templates to help identify available templates
+     */
+    public function listTemplates(): array
+    {
+        try {
+            Log::info('Persona List Templates Request', [
+                'url' => $this->baseUrl . '/templates',
+            ]);
+
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->apiKey,
+                'Persona-Version' => '2024-02-05',
+            ])->get($this->baseUrl . '/templates');
+
+            $responseData = $response->json();
+            
+            Log::info('Persona List Templates Response', [
+                'status_code' => $response->status(),
+                'response' => $responseData,
+            ]);
+
+            return $responseData;
+        } catch (\Exception $e) {
+            Log::error('Persona List Templates Failed', [
                 'error' => $e->getMessage(),
             ]);
             throw $e;
