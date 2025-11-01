@@ -17,7 +17,18 @@ class KycController extends Controller
         $kyc = KycVerification::where('user_id', $request->user()->id)->first();
 
         // Always return a consistent response - null if no KYC exists
-        return response()->json($kyc ?? null);
+        // Explicitly return null to ensure JSON null (not empty object)
+        if (!$kyc) {
+            return response()->json(null);
+        }
+
+        // Only return KYC if it has a valid status
+        // If status is null, treat it as if no record exists
+        if ($kyc->status === null) {
+            return response()->json(null);
+        }
+
+        return response()->json($kyc);
     }
 
     public function create(Request $request)
