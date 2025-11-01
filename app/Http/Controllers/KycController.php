@@ -210,11 +210,12 @@ class KycController extends Controller
             }
 
             // Map Persona status to our platform status
-            // Persona statuses: pending, processing, completed.approved, completed.declined, expired, etc.
+            // Persona statuses: pending, processing, approved, completed.approved, completed.declined, expired, etc.
+            // Note: Persona API can return "approved" (sandbox) or "completed.approved" (production)
             $oldStatus = $kyc->status;
-            $kyc->status = match($personaStatus) {
-                'completed.approved' => 'verified',
-                'completed.declined' => 'failed',
+            $kyc->status = match(strtolower($personaStatus)) {
+                'approved', 'completed.approved' => 'verified',
+                'declined', 'completed.declined' => 'failed',
                 'expired' => 'expired',
                 'pending', 'processing', 'waiting' => 'pending',
                 default => 'pending', // Default to pending for unknown statuses
