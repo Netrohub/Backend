@@ -38,22 +38,33 @@ class PersonaService
 
     public function createInquiry(array $data): array
     {
+        // Construct the full request payload
+        $payload = array_merge([
+            'template-id' => $this->templateId,
+            'environment' => $this->environmentId,
+        ], $data);
+
+        // Log the full request details for debugging
+        Log::info('Persona API Request', [
+            'url' => $this->baseUrl . '/inquiries',
+            'template_id' => $this->templateId,
+            'environment_id' => $this->environmentId,
+            'payload' => $payload,
+        ]);
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->apiKey,
             'Persona-Version' => '2024-02-05',
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
-        ])->post($this->baseUrl . '/inquiries', array_merge([
-            'template-id' => $this->templateId,
-            'environment' => $this->environmentId,
-        ], $data));
+        ])->post($this->baseUrl . '/inquiries', $payload);
 
         $responseData = $response->json();
         
-        Log::info('Persona Inquiry Created', [
-            'request' => $data,
+        Log::info('Persona Inquiry Response', [
+            'status_code' => $response->status(),
             'response' => $responseData,
-            'status' => $response->status(),
+            'headers' => $response->headers(),
         ]);
 
         // Check for API errors
