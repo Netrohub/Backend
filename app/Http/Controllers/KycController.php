@@ -175,15 +175,33 @@ class KycController extends Controller
             // Retrieve inquiry status from Persona
             $inquiryData = $this->personaService->retrieveInquiry($kyc->persona_inquiry_id);
             
+            // Log full response structure for debugging
+            \Illuminate\Support\Facades\Log::info('KYC Sync: Full Persona API Response', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'response_keys' => array_keys($inquiryData),
+                'has_data' => isset($inquiryData['data']),
+                'data_keys' => isset($inquiryData['data']) ? array_keys($inquiryData['data']) : null,
+                'has_attributes' => isset($inquiryData['data']['attributes']),
+                'attributes_keys' => isset($inquiryData['data']['attributes']) ? array_keys($inquiryData['data']['attributes']) : null,
+                'full_response' => json_encode($inquiryData, JSON_PRETTY_PRINT),
+            ]);
+            
             // Extract status from Persona API response
             // Persona API response structure: { "data": { "attributes": { "status": "completed.approved" } } }
-            $personaStatus = $inquiryData['data']['attributes']['status'] ?? null;
+            // Try multiple possible locations for status
+            $personaStatus = $inquiryData['data']['attributes']['status'] 
+                ?? $inquiryData['data']['status'] 
+                ?? $inquiryData['attributes']['status'] 
+                ?? $inquiryData['status'] 
+                ?? null;
             
             if (!$personaStatus) {
                 \Illuminate\Support\Facades\Log::warning('KYC Sync: No status in Persona response', [
                     'user_id' => $user->id,
                     'inquiry_id' => $kyc->persona_inquiry_id,
                     'response_structure' => array_keys($inquiryData),
+                    'full_response' => json_encode($inquiryData, JSON_PRETTY_PRINT),
                 ]);
                 return response()->json([
                     'message' => 'Could not retrieve inquiry status from Persona',
@@ -210,44 +228,82 @@ class KycController extends Controller
                 'old_status' => $oldStatus,
             ]);
 
-            // Handle status changes
-            if ($kyc->status === 'verified' && $oldStatus !== 'verified') {
-                // Status changed to verified - update user and send notification
-                $kyc->verified_at = now();
-                
-                // Update user verification status
-                $user->is_verified = true;
-                $user->save();
-                
-                // Send verification notification
-                $user->notify(new \App\Notifications\KycVerified($kyc, true));
-                
-                \Illuminate\Support\Facades\Log::info('KYC Sync: User verified', [
-                    'user_id' => $user->id,
-                    'inquiry_id' => $kyc->persona_inquiry_id,
-                    'verified_at' => $kyc->verified_at->toIso8601String(),
-                ]);
-            } elseif (($kyc->status === 'failed' || $kyc->status === 'expired') && $oldStatus !== $kyc->status) {
-                // Status changed to failed/expired - send notification
-                // Reset user verification status if it was previously verified
-                if ($user->is_verified) {
-                    $user->is_verified = false;
+            // Handle status changes - Always update user status based on current KYC status
+            if ($kyc->status === 'verified') {
+                // Status is verified - ensure user is verified
+                if ($oldStatus !== 'verified') {
+                    // Status changed to verified - update user and send notification
+                    $kyc->verified_at = now();
+                    $user->is_verified = true;
                     $user->save();
+                    
+                    // Send verification notification
+                    $user->notify(new \App\Notifications\KycVerified($kyc, true));
+                    
+                    \Illuminate\Support\Facades\Log::info('KYC Sync: User verified (status changed)', [
+                        'user_id' => $user->id,
+                        'inquiry_id' => $kyc->persona_inquiry_id,
+                        'verified_at' => $kyc->verified_at->toIso8601String(),
+                    ]);
+                } else {
+                    // Status already verified, but ensure user is still verified
+                    if (!$user->is_verified) {
+                        $user->is_verified = true;
+                        $user->save();
+                        \Illuminate\Support\Facades\Log::info('KYC Sync: User verification status corrected to verified', [
+                            'user_id' => $user->id,
+                            'inquiry_id' => $kyc->persona_inquiry_id,
+                        ]);
+                    }
                 }
-                
-                // Send notification for failed/expired KYC
-                $user->notify(new \App\Notifications\KycVerified($kyc, false));
-                
-                \Illuminate\Support\Facades\Log::info('KYC Sync: Verification failed/expired', [
-                    'user_id' => $user->id,
-                    'inquiry_id' => $kyc->persona_inquiry_id,
-                    'status' => $kyc->status,
-                ]);
+            } elseif ($kyc->status === 'failed' || $kyc->status === 'expired') {
+                // Status is failed/expired - ensure user is not verified
+                if ($oldStatus !== $kyc->status) {
+                    // Status changed to failed/expired - send notification
+                    if ($user->is_verified) {
+                        $user->is_verified = false;
+                        $user->save();
+                    }
+                    
+                    // Send notification for failed/expired KYC
+                    $user->notify(new \App\Notifications\KycVerified($kyc, false));
+                    
+                    \Illuminate\Support\Facades\Log::info('KYC Sync: Verification failed/expired (status changed)', [
+                        'user_id' => $user->id,
+                        'inquiry_id' => $kyc->persona_inquiry_id,
+                        'status' => $kyc->status,
+                    ]);
+                } else {
+                    // Status already failed/expired, but ensure user is not verified
+                    if ($user->is_verified) {
+                        $user->is_verified = false;
+                        $user->save();
+                        \Illuminate\Support\Facades\Log::info('KYC Sync: User verification status corrected to not verified', [
+                            'user_id' => $user->id,
+                            'inquiry_id' => $kyc->persona_inquiry_id,
+                            'status' => $kyc->status,
+                        ]);
+                    }
+                }
             }
 
             // Merge and save Persona data
             $kyc->persona_data = array_merge($kyc->persona_data ?? [], $inquiryData);
+            
+            // IMPORTANT: Always save the KYC record, even if status didn't change
+            // This ensures the database is updated with the latest Persona data
             $kyc->save();
+            
+            // Log before save to confirm what we're saving
+            \Illuminate\Support\Facades\Log::info('KYC Sync: About to save to database', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'persona_status' => $personaStatus,
+                'kyc_status_before_save' => $kyc->status,
+                'kyc_id' => $kyc->id,
+                'is_dirty' => $kyc->isDirty(),
+                'dirty_attributes' => $kyc->getDirty(),
+            ]);
 
             \Illuminate\Support\Facades\Log::info('KYC Sync: Status saved to database', [
                 'user_id' => $user->id,
