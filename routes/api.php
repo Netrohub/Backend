@@ -56,8 +56,8 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
 
-        // Image upload (require email verification)
-        Route::middleware('verified')->group(function () {
+        // Image upload (require KYC verification)
+        Route::middleware('kyc.verified')->group(function () {
             Route::post('/images/upload', [ImageController::class, 'upload']);
         });
 
