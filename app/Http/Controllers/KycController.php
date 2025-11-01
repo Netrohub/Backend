@@ -108,4 +108,31 @@ class KycController extends Controller
             'inquiry_url' => $personaResponse['data']['attributes']['inquiry-url'] ?? null,
         ], 201);
     }
+
+    /**
+     * Diagnostic endpoint to verify Persona configuration
+     * This helps troubleshoot "Record not found" errors
+     */
+    public function verifyConfig(Request $request)
+    {
+        try {
+            $templateInfo = $this->personaService->verifyTemplate();
+            
+            return response()->json([
+                'status' => 'success',
+                'template_id' => config('services.persona.template_id'),
+                'environment_id' => config('services.persona.environment_id'),
+                'template_exists' => isset($templateInfo['data']),
+                'template_info' => $templateInfo,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'template_id' => config('services.persona.template_id'),
+                'environment_id' => config('services.persona.environment_id'),
+                'error' => $e->getMessage(),
+                'message' => 'Template verification failed. Please check that the template ID exists in your Persona sandbox account.',
+            ], 404);
+        }
+    }
 }
