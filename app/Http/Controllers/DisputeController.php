@@ -20,7 +20,8 @@ class DisputeController extends Controller
         $disputes = PaginationHelper::paginate(
             Dispute::with(['order', 'initiator', 'resolver'])
                 ->whereHas('order', function($query) use ($user) {
-                    $query->where('buyer_id', $user->id)
+                    $query->withActiveUsers() // Only show disputes for orders with active users
+                          ->where('buyer_id', $user->id)
                           ->orWhere('seller_id', $user->id);
                 })
                 ->orderBy('created_at', 'desc'),
@@ -66,8 +67,26 @@ class DisputeController extends Controller
         ]);
 
         // Update order status
+        $oldOrderStatus = $order->status;
         $order->status = 'disputed';
         $order->save();
+
+        // Audit log for dispute creation
+        AuditHelper::log(
+            'dispute.created',
+            Dispute::class,
+            $dispute->id,
+            [],
+            [
+                'order_id' => $order->id,
+                'initiated_by' => $user->id,
+                'party' => $dispute->party,
+                'reason' => $dispute->reason,
+                'order_status_before' => $oldOrderStatus,
+                'order_status_after' => 'disputed',
+            ],
+            $request
+        );
 
         // Send notifications to buyer and seller
         $order->buyer->notify(new DisputeCreated($dispute));

@@ -21,6 +21,7 @@ class OrderController extends Controller
         
         $orders = PaginationHelper::paginate(
             Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
+                ->withActiveUsers() // Only show orders from active (non-deleted) users
                 ->where(function($query) use ($user) {
                     $query->where('buyer_id', $user->id)
                           ->orWhere('seller_id', $user->id);

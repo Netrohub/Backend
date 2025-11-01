@@ -17,6 +17,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\MessageHelper;
+use App\Helpers\AuditHelper;
 
 class WebhookController extends Controller
 {
@@ -97,6 +98,20 @@ class WebhookController extends Controller
                 $order->escrow_hold_at = now();
                 $order->escrow_release_at = now()->addHours(12);
                 $order->save();
+
+                // Audit log for order status change
+                AuditHelper::log(
+                    'order.status_changed',
+                    Order::class,
+                    $order->id,
+                    ['status' => $oldStatus],
+                    [
+                        'status' => 'escrow_hold',
+                        'paid_at' => $order->paid_at->toIso8601String(),
+                        'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                    ],
+                    $request
+                );
 
                 // Send notifications
                 $order->buyer->notify(new PaymentConfirmed($order));

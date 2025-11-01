@@ -37,5 +37,19 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Log all exceptions with full context
+        $exceptions->respond(function (\Symfony\Component\HttpFoundation\Response $response, \Throwable $exception, \Illuminate\Http\Request $request) {
+            if (app()->bound('log')) {
+                \Illuminate\Support\Facades\Log::error('Exception occurred', [
+                    'message' => $exception->getMessage(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                    'trace' => $exception->getTraceAsString(),
+                    'url' => $request->fullUrl(),
+                    'method' => $request->method(),
+                    'ip' => $request->ip(),
+                ]);
+            }
+            return $response;
+        });
     })->create();

@@ -14,10 +14,26 @@ class PersonaService
 
     public function __construct()
     {
-        $this->apiKey = config('services.persona.api_key');
+        $apiKey = config('services.persona.api_key');
+        $templateId = config('services.persona.template_id');
+        $environmentId = config('services.persona.environment_id');
+        
+        // Validate required configuration before assignment
+        if (empty($apiKey)) {
+            throw new \RuntimeException('PERSONA_API_KEY is not configured. Please set it in your environment variables.');
+        }
+        if (empty($templateId)) {
+            throw new \RuntimeException('PERSONA_TEMPLATE_ID is not configured. Please set it in your environment variables.');
+        }
+        if (empty($environmentId)) {
+            throw new \RuntimeException('PERSONA_ENVIRONMENT_ID is not configured. Please set it in your environment variables.');
+        }
+        
+        // Assign after validation (ensures they're non-null strings)
+        $this->apiKey = (string) $apiKey;
         $this->baseUrl = config('services.persona.base_url', 'https://withpersona.com/api/v1');
-        $this->templateId = config('services.persona.template_id');
-        $this->environmentId = config('services.persona.environment_id');
+        $this->templateId = (string) $templateId;
+        $this->environmentId = (string) $environmentId;
     }
 
     public function createInquiry(array $data): array
