@@ -144,15 +144,42 @@ class WebhookController extends Controller
 
         $inquiryId = $payload['data']['id'] ?? null;
         $status = $payload['data']['attributes']['status'] ?? null;
+        $referenceId = $payload['data']['attributes']['reference-id'] ?? null;
 
         if (!$inquiryId) {
             return response()->json(['message' => MessageHelper::WEBHOOK_INVALID_PAYLOAD], 400);
         }
 
+        // Try to find existing KYC record
         $kyc = KycVerification::where('persona_inquiry_id', $inquiryId)->first();
 
+        // If KYC doesn't exist, try to create it from reference-id
+        // Reference ID format: "user_{user_id}"
+        if (!$kyc && $referenceId && str_starts_with($referenceId, 'user_')) {
+            $userId = (int) str_replace('user_', '', $referenceId);
+            if ($userId > 0) {
+                $user = User::find($userId);
+                if ($user) {
+                    // Create KYC record for this inquiry
+                    $kyc = KycVerification::create([
+                        'user_id' => $userId,
+                        'persona_inquiry_id' => $inquiryId,
+                        'status' => 'pending',
+                        'persona_data' => $payload,
+                    ]);
+                    Log::info('Persona Webhook: Created KYC record from inquiry', [
+                        'inquiry_id' => $inquiryId,
+                        'user_id' => $userId,
+                    ]);
+                }
+            }
+        }
+
         if (!$kyc) {
-            Log::warning('Persona Webhook: KYC not found', ['inquiry_id' => $inquiryId]);
+            Log::warning('Persona Webhook: KYC not found and could not create', [
+                'inquiry_id' => $inquiryId,
+                'reference_id' => $referenceId,
+            ]);
             return response()->json(['message' => MessageHelper::WEBHOOK_KYC_NOT_FOUND], 404);
         }
 
