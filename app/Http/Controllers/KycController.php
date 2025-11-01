@@ -112,13 +112,58 @@ class KycController extends Controller
     /**
      * Sync KYC status from Persona API
      * Useful when webhooks don't arrive or need manual refresh
+     * Can sync by inquiryId (from embedded flow) or existing KYC record
      */
     public function sync(Request $request)
     {
         $user = $request->user();
         
-        // Get existing KYC record
-        $kyc = KycVerification::where('user_id', $user->id)->first();
+        // Check if inquiryId is provided (from embedded flow completion)
+        $inquiryId = $request->input('inquiry_id');
+        
+        // Get existing KYC record by user_id or inquiry_id
+        $kyc = null;
+        if ($inquiryId) {
+            // Try to find by inquiry_id first (for embedded flow)
+            $kyc = KycVerification::where('persona_inquiry_id', $inquiryId)->first();
+            
+            // If not found but inquiryId provided, create it
+            if (!$kyc) {
+                // Retrieve inquiry from Persona to get reference-id
+                try {
+                    $inquiryData = $this->personaService->retrieveInquiry($inquiryId);
+                    $referenceId = $inquiryData['data']['attributes']['reference-id'] ?? null;
+                    
+                    // Verify reference-id matches this user
+                    if ($referenceId && str_starts_with($referenceId, 'user_')) {
+                        $userId = (int) str_replace('user_', '', $referenceId);
+                        if ($userId === $user->id) {
+                            // Create KYC record
+                            $kyc = KycVerification::create([
+                                'user_id' => $user->id,
+                                'persona_inquiry_id' => $inquiryId,
+                                'status' => 'pending',
+                                'persona_data' => $inquiryData,
+                            ]);
+                            \Illuminate\Support\Facades\Log::info('KYC Sync: Created KYC record from inquiry', [
+                                'inquiry_id' => $inquiryId,
+                                'user_id' => $user->id,
+                            ]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::error('KYC Sync: Failed to retrieve inquiry', [
+                        'inquiry_id' => $inquiryId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+        
+        // Fallback: Get existing KYC record by user_id
+        if (!$kyc) {
+            $kyc = KycVerification::where('user_id', $user->id)->first();
+        }
         
         if (!$kyc || !$kyc->persona_inquiry_id) {
             return response()->json([
