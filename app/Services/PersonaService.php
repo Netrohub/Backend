@@ -39,7 +39,7 @@ class PersonaService
     public function createInquiry(array $data): array
     {
         $response = Http::withHeaders([
-            'Key' => $this->apiKey,
+            'Authorization' => 'Bearer ' . $this->apiKey,
             'Persona-Version' => '2024-02-05',
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
@@ -71,7 +71,7 @@ class PersonaService
     public function retrieveInquiry(string $inquiryId): array
     {
         $response = Http::withHeaders([
-            'Key' => $this->apiKey,
+            'Authorization' => 'Bearer ' . $this->apiKey,
             'Persona-Version' => '2024-02-05',
         ])->get($this->baseUrl . '/inquiries/' . $inquiryId);
 
