@@ -61,8 +61,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/images/upload', [ImageController::class, 'upload']);
         });
 
-        // Listings (require email verification for creating/updating/deleting)
-        Route::middleware('verified')->group(function () {
+        // Listings (require KYC verification for creating/updating/deleting)
+        Route::middleware('kycVerified')->group(function () {
             Route::post('/listings', [ListingController::class, 'store']);
             Route::put('/listings/{id}', [ListingController::class, 'update']);
             Route::delete('/listings/{id}', [ListingController::class, 'destroy']);
