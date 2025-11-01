@@ -24,8 +24,10 @@ RUN composer dump-autoload --optimize --no-interaction
 # Laravel caches (ignore failures on first build)
 # Note: config:cache is NOT run here because environment variables aren't available during build
 # Config will be read fresh from environment variables at runtime
+# Clear route cache first to ensure fresh routes, then cache them
 # Only cache routes and views (these don't depend on env vars)
-RUN php artisan route:cache || true \
+RUN php artisan route:clear || true \
+ && php artisan route:cache || true \
  && php artisan view:cache || true
 
 # FrankenPHP configuration

@@ -57,7 +57,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/user', [AuthController::class, 'user']);
 
         // Image upload (require KYC verification)
-        Route::middleware('kyc.verified')->group(function () {
+        Route::middleware('kycVerified')->group(function () {
             Route::post('/images/upload', [ImageController::class, 'upload']);
         });
 
