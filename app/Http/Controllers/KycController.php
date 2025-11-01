@@ -39,9 +39,35 @@ class KycController extends Controller
             ],
         ];
 
-        $personaResponse = $this->personaService->createInquiry($inquiryData);
+        try {
+            $personaResponse = $this->personaService->createInquiry($inquiryData);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Persona API Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'message' => 'فشل الاتصال بخدمة التحقق. يرجى المحاولة لاحقاً.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+
+        // Check for Persona API errors
+        if (isset($personaResponse['errors']) && !empty($personaResponse['errors'])) {
+            $errorMessage = $personaResponse['errors'][0]['title'] ?? 'فشل إنشاء طلب التحقق';
+            \Illuminate\Support\Facades\Log::error('Persona API Error Response', [
+                'errors' => $personaResponse['errors'],
+            ]);
+            return response()->json([
+                'message' => $errorMessage,
+                'errors' => $personaResponse['errors']
+            ], 500);
+        }
 
         if (!isset($personaResponse['data']['id'])) {
+            \Illuminate\Support\Facades\Log::error('Persona API: Missing inquiry ID', [
+                'response' => $personaResponse,
+            ]);
             return response()->json(['message' => 'Failed to create KYC inquiry'], 500);
         }
 

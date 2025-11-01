@@ -41,17 +41,31 @@ class PersonaService
         $response = Http::withHeaders([
             'Key' => $this->apiKey,
             'Persona-Version' => '2024-02-05',
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
         ])->post($this->baseUrl . '/inquiries', array_merge([
             'template-id' => $this->templateId,
             'environment' => $this->environmentId,
         ], $data));
 
+        $responseData = $response->json();
+        
         Log::info('Persona Inquiry Created', [
             'request' => $data,
-            'response' => $response->json(),
+            'response' => $responseData,
+            'status' => $response->status(),
         ]);
 
-        return $response->json();
+        // Check for API errors
+        if ($response->failed() || isset($responseData['errors'])) {
+            $errorMessage = 'Persona API error';
+            if (isset($responseData['errors']) && is_array($responseData['errors']) && !empty($responseData['errors'])) {
+                $errorMessage = $responseData['errors'][0]['title'] ?? $responseData['errors'][0]['detail'] ?? 'Persona API error';
+            }
+            throw new \RuntimeException($errorMessage);
+        }
+
+        return $responseData;
     }
 
     public function retrieveInquiry(string $inquiryId): array
