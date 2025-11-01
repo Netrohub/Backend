@@ -3,6 +3,7 @@
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DisputeController;
+use App\Http\Controllers\ImageController;
 use App\Http\Controllers\KycController;
 use App\Http\Controllers\LeaderboardController;
 use App\Http\Controllers\ListingController;
@@ -54,6 +55,11 @@ Route::prefix('v1')->group(function () {
         // Auth
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
+
+        // Image upload (require email verification)
+        Route::middleware('verified')->group(function () {
+            Route::post('/images/upload', [ImageController::class, 'upload']);
+        });
 
         // Listings (require email verification for creating/updating/deleting)
         Route::middleware('verified')->group(function () {
