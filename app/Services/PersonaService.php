@@ -82,12 +82,39 @@ class PersonaService
 
     public function retrieveInquiry(string $inquiryId): array
     {
+        Log::info('Persona Retrieve Inquiry Request', [
+            'inquiry_id' => $inquiryId,
+            'url' => $this->baseUrl . '/inquiries/' . $inquiryId,
+        ]);
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->apiKey,
             'Persona-Version' => '2024-02-05',
         ])->get($this->baseUrl . '/inquiries/' . $inquiryId);
 
-        return $response->json();
+        $responseData = $response->json();
+
+        // Log the response for debugging
+        $status = $responseData['data']['attributes']['status'] ?? 'unknown';
+        Log::info('Persona Retrieve Inquiry Response', [
+            'inquiry_id' => $inquiryId,
+            'status_code' => $response->status(),
+            'persona_status' => $status,
+            'has_data' => isset($responseData['data']),
+        ]);
+
+        if ($response->failed()) {
+            $errorMessage = $responseData['errors'][0]['title'] ?? 'Unknown error';
+            Log::error('Persona Retrieve Inquiry Failed', [
+                'inquiry_id' => $inquiryId,
+                'status_code' => $response->status(),
+                'error' => $errorMessage,
+                'response' => $responseData,
+            ]);
+            throw new \RuntimeException('Failed to retrieve inquiry: ' . $errorMessage);
+        }
+
+        return $responseData;
     }
 
     /**
