@@ -209,10 +209,20 @@ class KycController extends Controller
             $kyc->persona_data = array_merge($kyc->persona_data ?? [], $inquiryData);
             $kyc->save();
 
+            \Illuminate\Support\Facades\Log::info('KYC Sync: Status saved to database', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'old_status' => $oldStatus,
+                'new_status' => $kyc->status,
+                'verified_at' => $kyc->verified_at?->toIso8601String(),
+                'user_is_verified' => $user->is_verified,
+            ]);
+
             return response()->json([
                 'kyc' => $kyc,
                 'synced' => true,
                 'status' => $kyc->status,
+                'saved' => true,
             ]);
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('KYC Sync Error', [
