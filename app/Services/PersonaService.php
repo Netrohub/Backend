@@ -45,10 +45,11 @@ class PersonaService
         ], $data);
 
         // Log the full request details for debugging
-        Log::info('Persona API Request', [
+        Log::info('Persona API Request (Sandbox)', [
             'url' => $this->baseUrl . '/inquiries',
             'template_id' => $this->templateId,
             'environment_id' => $this->environmentId,
+            'api_key_prefix' => substr($this->apiKey, 0, 10) . '...', // Log partial key for security
             'payload' => $payload,
         ]);
 
