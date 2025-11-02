@@ -198,4 +198,71 @@ class ImageController extends Controller
 
         return response()->json($images);
     }
+
+    /**
+     * Verify Cloudflare Images configuration (diagnostic endpoint)
+     */
+    public function verifyConfig(Request $request)
+    {
+        $accountId = config('services.cloudflare.account_id');
+        $apiToken = config('services.cloudflare.api_token');
+        $accountHash = config('services.cloudflare.account_hash');
+
+        $config = [
+            'has_account_id' => !empty($accountId),
+            'has_api_token' => !empty($apiToken),
+            'has_account_hash' => !empty($accountHash),
+            'account_id_length' => $accountId ? strlen($accountId) : 0,
+            'api_token_prefix' => $apiToken ? substr($apiToken, 0, 10) . '...' : null,
+            'account_hash_length' => $accountHash ? strlen($accountHash) : 0,
+        ];
+
+        $allConfigured = $config['has_account_id'] && 
+                         $config['has_api_token'] && 
+                         $config['has_account_hash'];
+
+        if (!$allConfigured) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cloudflare Images is not fully configured',
+                'config' => $config,
+                'required_env_vars' => [
+                    'CLOUDFLARE_ACCOUNT_ID' => $config['has_account_id'],
+                    'CLOUDFLARE_API_TOKEN' => $config['has_api_token'],
+                    'CLOUDFLARE_ACCOUNT_HASH' => $config['has_account_hash'],
+                ],
+            ], 500);
+        }
+
+        // Test API connection
+        try {
+            $response = Http::withToken($apiToken)
+                ->get("https://api.cloudflare.com/client/v4/accounts/{$accountId}/images/v2/stats");
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Cloudflare API authentication failed',
+                    'cloudflare_error' => $response->json(),
+                    'config' => $config,
+                ], 500);
+            }
+
+            $stats = $response->json('result');
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Cloudflare Images is properly configured',
+                'config' => $config,
+                'stats' => $stats,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to connect to Cloudflare API',
+                'error' => $e->getMessage(),
+                'config' => $config,
+            ], 500);
+        }
+    }
 }
