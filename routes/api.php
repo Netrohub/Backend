@@ -114,12 +114,28 @@ Route::prefix('v1')->group(function () {
 
         // Admin routes (require admin role)
         Route::prefix('admin')->middleware('admin')->group(function () {
+            // Dashboard
+            Route::get('/stats', [AdminController::class, 'stats']);
+            Route::get('/activity', [AdminController::class, 'activity']);
+            
+            // Users
             Route::get('/users', [AdminController::class, 'users']);
             Route::put('/users/{id}', [AdminController::class, 'updateUser']);
             Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
-            Route::get('/disputes', [AdminController::class, 'disputes']);
+            
+            // Listings
             Route::get('/listings', [AdminController::class, 'listings']);
+            Route::put('/listings/{id}/status', [AdminController::class, 'updateListingStatus']);
+            Route::delete('/listings/{id}', [AdminController::class, 'deleteListing']);
+            
+            // Orders
             Route::get('/orders', [AdminController::class, 'orders']);
+            Route::post('/orders/{id}/cancel', [AdminController::class, 'cancelOrder']);
+            
+            // Disputes
+            Route::get('/disputes', [AdminController::class, 'disputes']);
+            
+            // KYC
             Route::get('/kyc', [AdminController::class, 'kyc']);
             
             // Admin Notifications (create notifications for users)
