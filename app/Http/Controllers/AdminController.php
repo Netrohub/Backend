@@ -134,63 +134,91 @@ class AdminController extends Controller
      */
     public function stats(Request $request)
     {
-        // Cache stats for 5 minutes
-        $stats = \Illuminate\Support\Facades\Cache::remember('admin_dashboard_stats', 300, function () {
-            $now = now();
-            $lastMonth = now()->subMonth();
+        try {
+            // Cache stats for 5 minutes
+            $stats = \Illuminate\Support\Facades\Cache::remember('admin_dashboard_stats', 300, function () {
+                $now = now();
+                $lastMonth = now()->subMonth();
+                
+                // Helper function for safe growth calculation
+                $calculateGrowth = function ($current, $previous) {
+                    if ($previous == 0) {
+                        return $current > 0 ? 100 : 0;
+                    }
+                    return (($current - $previous) / $previous) * 100;
+                };
+                
+                // Current month stats
+                $currentMonthUsers = User::whereMonth('created_at', $now->month)
+                    ->whereYear('created_at', $now->year)
+                    ->count();
+                $lastMonthUsers = User::whereMonth('created_at', $lastMonth->month)
+                    ->whereYear('created_at', $lastMonth->year)
+                    ->count();
+                $usersGrowth = $calculateGrowth($currentMonthUsers, $lastMonthUsers);
+
+                $currentMonthListings = Listing::where('status', 'active')
+                    ->whereMonth('created_at', $now->month)
+                    ->whereYear('created_at', $now->year)
+                    ->count();
+                $lastMonthListings = Listing::where('status', 'active')
+                    ->whereMonth('created_at', $lastMonth->month)
+                    ->whereYear('created_at', $lastMonth->year)
+                    ->count();
+                $listingsGrowth = $calculateGrowth($currentMonthListings, $lastMonthListings);
+
+                $currentMonthOrders = Order::whereMonth('created_at', $now->month)
+                    ->whereYear('created_at', $now->year)
+                    ->count();
+                $lastMonthOrders = Order::whereMonth('created_at', $lastMonth->month)
+                    ->whereYear('created_at', $lastMonth->year)
+                    ->count();
+                $ordersGrowth = $calculateGrowth($currentMonthOrders, $lastMonthOrders);
+
+                $currentMonthRevenue = Order::where('status', 'completed')
+                    ->whereMonth('created_at', $now->month)
+                    ->whereYear('created_at', $now->year)
+                    ->sum('total_price') ?? 0;
+                $lastMonthRevenue = Order::where('status', 'completed')
+                    ->whereMonth('created_at', $lastMonth->month)
+                    ->whereYear('created_at', $lastMonth->year)
+                    ->sum('total_price') ?? 0;
+                $revenueGrowth = $calculateGrowth($currentMonthRevenue, $lastMonthRevenue);
+
+                return [
+                    'total_users' => User::count(),
+                    'users_growth' => round($usersGrowth, 1),
+                    'active_listings' => Listing::where('status', 'active')->count(),
+                    'listings_growth' => round($listingsGrowth, 1),
+                    'orders_this_month' => $currentMonthOrders,
+                    'orders_growth' => round($ordersGrowth, 1),
+                    'total_revenue' => (float) $currentMonthRevenue,
+                    'revenue_growth' => round($revenueGrowth, 1),
+                    'open_disputes' => Dispute::where('status', 'open')->count(),
+                    'pending_kyc' => KycVerification::where('status', 'pending')->count(),
+                ];
+            });
+
+            return response()->json($stats);
+        } catch (\Exception $e) {
+            \Log::error('Admin stats error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
             
-            // Current month stats
-            $currentMonthUsers = User::whereMonth('created_at', $now->month)
-                ->whereYear('created_at', $now->year)
-                ->count();
-            $lastMonthUsers = User::whereMonth('created_at', $lastMonth->month)
-                ->whereYear('created_at', $lastMonth->year)
-                ->count();
-            $usersGrowth = $lastMonthUsers > 0 ? (($currentMonthUsers - $lastMonthUsers) / $lastMonthUsers) * 100 : 0;
-
-            $currentMonthListings = Listing::where('status', 'active')
-                ->whereMonth('created_at', $now->month)
-                ->whereYear('created_at', $now->year)
-                ->count();
-            $lastMonthListings = Listing::where('status', 'active')
-                ->whereMonth('created_at', $lastMonth->month)
-                ->whereYear('created_at', $lastMonth->year)
-                ->count();
-            $listingsGrowth = $lastMonthListings > 0 ? (($currentMonthListings - $lastMonthListings) / $lastMonthListings) * 100 : 0;
-
-            $currentMonthOrders = Order::whereMonth('created_at', $now->month)
-                ->whereYear('created_at', $now->year)
-                ->count();
-            $lastMonthOrders = Order::whereMonth('created_at', $lastMonth->month)
-                ->whereYear('created_at', $lastMonth->year)
-                ->count();
-            $ordersGrowth = $lastMonthOrders > 0 ? (($currentMonthOrders - $lastMonthOrders) / $lastMonthOrders) * 100 : 0;
-
-            $currentMonthRevenue = Order::where('status', 'completed')
-                ->whereMonth('created_at', $now->month)
-                ->whereYear('created_at', $now->year)
-                ->sum('total_price');
-            $lastMonthRevenue = Order::where('status', 'completed')
-                ->whereMonth('created_at', $lastMonth->month)
-                ->whereYear('created_at', $lastMonth->year)
-                ->sum('total_price');
-            $revenueGrowth = $lastMonthRevenue > 0 ? (($currentMonthRevenue - $lastMonthRevenue) / $lastMonthRevenue) * 100 : 0;
-
-            return [
+            // Return safe defaults on error
+            return response()->json([
                 'total_users' => User::count(),
-                'users_growth' => round($usersGrowth, 1),
+                'users_growth' => 0,
                 'active_listings' => Listing::where('status', 'active')->count(),
-                'listings_growth' => round($listingsGrowth, 1),
-                'orders_this_month' => $currentMonthOrders,
-                'orders_growth' => round($ordersGrowth, 1),
-                'total_revenue' => $currentMonthRevenue,
-                'revenue_growth' => round($revenueGrowth, 1),
+                'listings_growth' => 0,
+                'orders_this_month' => 0,
+                'orders_growth' => 0,
+                'total_revenue' => 0,
+                'revenue_growth' => 0,
                 'open_disputes' => Dispute::where('status', 'open')->count(),
                 'pending_kyc' => KycVerification::where('status', 'pending')->count(),
-            ];
-        });
-
-        return response()->json($stats);
+            ]);
+        }
     }
 
     /**
