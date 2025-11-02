@@ -40,11 +40,19 @@ class ImageController extends Controller
                 'has_account_id' => !empty($accountId),
                 'has_api_token' => !empty($apiToken),
                 'has_account_hash' => !empty($accountHash),
+                'account_id_length' => $accountId ? strlen($accountId) : 0,
+                'api_token_length' => $apiToken ? strlen($apiToken) : 0,
+                'account_hash_length' => $accountHash ? strlen($accountHash) : 0,
             ]);
             
             return response()->json([
-                'message' => 'Image service configuration error',
+                'message' => 'Image service configuration error. Please ensure CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_ACCOUNT_HASH are set in environment variables.',
                 'error_code' => 'CLOUDFLARE_CONFIG_MISSING',
+                'debug' => [
+                    'has_account_id' => !empty($accountId),
+                    'has_api_token' => !empty($apiToken),
+                    'has_account_hash' => !empty($accountHash),
+                ],
             ], 500);
         }
 
@@ -54,16 +62,31 @@ class ImageController extends Controller
             }
 
             try {
+                // Log upload attempt for debugging
+                Log::info('Attempting Cloudflare Images upload', [
+                    'filename' => $file->getClientOriginalName(),
+                    'size' => $file->getSize(),
+                    'account_id_length' => strlen($accountId),
+                    'api_token_length' => strlen($apiToken),
+                    'url' => "https://api.cloudflare.com/client/v4/accounts/{$accountId}/images/v1",
+                ]);
+
                 // Upload to Cloudflare Images API
                 $response = Http::withToken($apiToken)
                     ->attach('file', fopen($file->getRealPath(), 'r'), $file->getClientOriginalName())
                     ->post("https://api.cloudflare.com/client/v4/accounts/{$accountId}/images/v1");
 
                 if (!$response->successful()) {
+                    $errorBody = $response->json();
+                    
                     Log::error('Cloudflare Images upload failed', [
                         'status' => $response->status(),
                         'body' => $response->body(),
                         'filename' => $file->getClientOriginalName(),
+                        'account_id_length' => strlen($accountId),
+                        'api_token_prefix' => substr($apiToken, 0, 10) . '...',
+                        'error_code' => $errorBody['errors'][0]['code'] ?? 'unknown',
+                        'error_message' => $errorBody['errors'][0]['message'] ?? 'unknown',
                     ]);
                     
                     continue; // Skip this image and continue with others
