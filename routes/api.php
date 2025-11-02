@@ -14,6 +14,7 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\WalletController;
 use App\Http\Controllers\WebhookController;
+use App\Http\Controllers\ReviewController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -42,6 +43,10 @@ Route::prefix('v1')->group(function () {
     // Listings (public - anyone can browse, but creating/updating requires auth)
     Route::get('/listings', [ListingController::class, 'index']);
     Route::get('/listings/{id}', [ListingController::class, 'show']);
+    
+    // Public reviews
+    Route::get('/reviews/seller/{sellerId}', [ReviewController::class, 'index']);
+    Route::get('/reviews/seller/{sellerId}/stats', [ReviewController::class, 'stats']);
 
     // Webhooks (no auth required, but rate limited by IP)
     // Rate limit: 60 requests per minute per IP to prevent DoS attacks
@@ -58,6 +63,9 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
         Route::get('/user/stats', [AuthController::class, 'stats']);
+        Route::get('/user/activity', [AuthController::class, 'activity']);
+        Route::put('/user/profile', [AuthController::class, 'updateProfile']);
+        Route::put('/user/password', [AuthController::class, 'updatePassword']);
 
         // Images (require KYC verification)
         Route::middleware('kycVerified')->group(function () {
@@ -85,6 +93,13 @@ Route::prefix('v1')->group(function () {
 
         // Disputes
         Route::apiResource('disputes', DisputeController::class);
+
+        // Reviews (protected - must be authenticated)
+        Route::post('/reviews', [ReviewController::class, 'store']);
+        Route::put('/reviews/{id}', [ReviewController::class, 'update']);
+        Route::delete('/reviews/{id}', [ReviewController::class, 'destroy']);
+        Route::post('/reviews/{id}/helpful', [ReviewController::class, 'markHelpful']);
+        Route::post('/reviews/{id}/report', [ReviewController::class, 'report']);
 
         // Wallet (withdrawals require email verification)
         Route::get('/wallet', [WalletController::class, 'index']);

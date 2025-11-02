@@ -152,6 +152,90 @@ class AuthController extends Controller
             'active_listings' => $user->listings()->where('status', 'active')->count(),
             'total_listings' => $user->listings()->count(),
             'member_since' => $user->created_at->format('Y-m-d'),
+            'average_rating' => $user->average_rating,
+            'total_reviews' => $user->total_reviews,
         ]);
+    }
+
+    /**
+     * Get user recent activity
+     */
+    public function activity(Request $request)
+    {
+        $user = $request->user();
+        
+        $activities = \App\Models\AuditLog::where('user_id', $user->id)
+            ->whereIn('action', [
+                'order.created',
+                'order.completed',
+                'listing.created',
+                'kyc.verified',
+                'withdrawal.completed',
+            ])
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get()
+            ->map(function ($log) {
+                return [
+                    'id' => $log->id,
+                    'type' => str_replace('.', '_', $log->action),
+                    'title' => $this->formatActivityTitle($log->action, $log->metadata),
+                    'created_at' => $log->created_at->toIso8601String(),
+                ];
+            });
+
+        return response()->json($activities);
+    }
+
+    /**
+     * Update user profile
+     */
+    public function updateProfile(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'email' => 'sometimes|email|max:255|unique:users,email,' . $request->user()->id,
+            'phone' => 'sometimes|nullable|string|max:20',
+        ]);
+
+        $user = $request->user();
+        $user->update($validated);
+
+        return response()->json($user->load(['wallet', 'kycVerification']));
+    }
+
+    /**
+     * Update password
+     */
+    public function updatePassword(Request $request)
+    {
+        $validated = $request->validate([
+            'current_password' => 'required|string',
+            'password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $user = $request->user();
+
+        if (!Hash::check($validated['current_password'], $user->password)) {
+            return response()->json(['message' => 'Current password is incorrect'], 400);
+        }
+
+        $user->password = Hash::make($validated['password']);
+        $user->save();
+
+        return response()->json(['message' => 'Password updated successfully']);
+    }
+
+    private function formatActivityTitle($action, $metadata)
+    {
+        $titles = [
+            'order.created' => 'طلب جديد #' . ($metadata['order_id'] ?? ''),
+            'order.completed' => 'تم إكمال طلب #' . ($metadata['order_id'] ?? ''),
+            'listing.created' => 'تم نشر إعلان جديد',
+            'kyc.verified' => 'تم توثيق الحساب',
+            'withdrawal.completed' => 'تم سحب $' . ($metadata['amount'] ?? '0'),
+        ];
+
+        return $titles[$action] ?? $action;
     }
 }

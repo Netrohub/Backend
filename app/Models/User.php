@@ -91,6 +91,38 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasMany(AuditLog::class);
     }
 
+    /**
+     * Reviews written by this user
+     */
+    public function reviewsGiven()
+    {
+        return $this->hasMany(\App\Models\Review::class, 'reviewer_id');
+    }
+
+    /**
+     * Reviews received as a seller
+     */
+    public function reviewsReceived()
+    {
+        return $this->hasMany(\App\Models\Review::class, 'seller_id');
+    }
+
+    /**
+     * Get average rating as a seller
+     */
+    public function getAverageRatingAttribute()
+    {
+        return round($this->reviewsReceived()->avg('rating') ?? 0, 1);
+    }
+
+    /**
+     * Get total reviews count as a seller
+     */
+    public function getTotalReviewsAttribute()
+    {
+        return $this->reviewsReceived()->count();
+    }
+
     // Helper methods
     public function isAdmin(): bool
     {
