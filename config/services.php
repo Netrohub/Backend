@@ -50,4 +50,11 @@ return [
         'base_url' => env('PERSONA_BASE_URL', 'https://withpersona.com/api/v1'),
     ],
 
+    'cloudflare' => [
+        'account_id' => env('CLOUDFLARE_ACCOUNT_ID'),
+        'api_token' => env('CLOUDFLARE_API_TOKEN'),
+        'account_hash' => env('CLOUDFLARE_ACCOUNT_HASH'),
+        'images_base' => env('CLOUDFLARE_IMAGES_BASE', 'https://imagedelivery.net'),
+    ],
+
 ];

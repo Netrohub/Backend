@@ -3,27 +3,25 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use App\Models\Image;
 
 class ImageController extends Controller
 {
     /**
-     * Upload images and return their URLs
+     * Upload images to Cloudflare Images
      * Accepts multiple images and returns array of URLs
      */
     public function upload(Request $request)
     {
         // Validate uploaded files
-        // Laravel expects 'images' as an array of files
         $validated = $request->validate([
             'images' => 'required|array|max:11', // Up to 11 images (8 listing + 3 bills)
-            'images.*' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120', // Max 5MB per image
+            'images.*' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:10240', // Max 10MB per image
         ]);
 
-        $uploadedUrls = [];
-
-        // Get all uploaded files from the 'images' array
+        $uploadedImages = [];
         $files = $request->file('images');
         
         if (!$files || !is_array($files)) {
@@ -32,33 +30,172 @@ class ImageController extends Controller
             ], 400);
         }
 
-        foreach ($files as $image) {
-            if (!$image || !$image->isValid()) {
+        $accountId = config('services.cloudflare.account_id');
+        $apiToken = config('services.cloudflare.api_token');
+        $accountHash = config('services.cloudflare.account_hash');
+
+        // Validate Cloudflare configuration
+        if (!$accountId || !$apiToken || !$accountHash) {
+            Log::error('Cloudflare Images configuration missing', [
+                'has_account_id' => !empty($accountId),
+                'has_api_token' => !empty($apiToken),
+                'has_account_hash' => !empty($accountHash),
+            ]);
+            
+            return response()->json([
+                'message' => 'Image service configuration error',
+                'error_code' => 'CLOUDFLARE_CONFIG_MISSING',
+            ], 500);
+        }
+
+        foreach ($files as $file) {
+            if (!$file || !$file->isValid()) {
                 continue;
             }
 
-            // Generate unique filename
-            $filename = Str::uuid() . '.' . $image->getClientOriginalExtension();
-            
-            // Store in public disk
-            $path = $image->storeAs('listings', $filename, 'public');
-            
-            // Get public URL
-            $url = Storage::disk('public')->url($path);
-            
-            $uploadedUrls[] = $url;
+            try {
+                // Upload to Cloudflare Images API
+                $response = Http::withToken($apiToken)
+                    ->attach('file', fopen($file->getRealPath(), 'r'), $file->getClientOriginalName())
+                    ->post("https://api.cloudflare.com/client/v4/accounts/{$accountId}/images/v1");
+
+                if (!$response->successful()) {
+                    Log::error('Cloudflare Images upload failed', [
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                        'filename' => $file->getClientOriginalName(),
+                    ]);
+                    
+                    continue; // Skip this image and continue with others
+                }
+
+                $result = $response->json('result');
+                $imageId = $result['id'];
+                
+                // Build delivery URL
+                $deliveryUrl = "https://imagedelivery.net/{$accountHash}/{$imageId}/public";
+                
+                // Extract metadata
+                $meta = [
+                    'filename' => $file->getClientOriginalName(),
+                    'size' => $file->getSize(),
+                    'mime_type' => $file->getMimeType(),
+                ];
+                
+                // Add variants if available in response
+                if (isset($result['variants']) && is_array($result['variants'])) {
+                    $meta['variants'] = $result['variants'];
+                }
+
+                // Save to database
+                $image = Image::create([
+                    'user_id' => $request->user()?->id,
+                    'image_id' => $imageId,
+                    'filename' => $file->getClientOriginalName(),
+                    'url' => $deliveryUrl,
+                    'meta' => $meta,
+                ]);
+
+                $uploadedImages[] = [
+                    'id' => $image->id,
+                    'image_id' => $imageId,
+                    'url' => $deliveryUrl,
+                    'thumbnail_url' => "https://imagedelivery.net/{$accountHash}/{$imageId}/thumbnail",
+                    'medium_url' => "https://imagedelivery.net/{$accountHash}/{$imageId}/medium",
+                ];
+
+                Log::info('Image uploaded to Cloudflare', [
+                    'image_id' => $imageId,
+                    'filename' => $file->getClientOriginalName(),
+                    'user_id' => $request->user()?->id,
+                ]);
+
+            } catch (\Exception $e) {
+                Log::error('Image upload exception', [
+                    'error' => $e->getMessage(),
+                    'filename' => $file->getClientOriginalName(),
+                ]);
+                
+                continue; // Skip this image and continue
+            }
         }
 
-        if (empty($uploadedUrls)) {
+        if (empty($uploadedImages)) {
             return response()->json([
-                'message' => 'No valid images were uploaded',
-            ], 400);
+                'message' => 'No images were uploaded successfully',
+                'error_code' => 'UPLOAD_FAILED',
+            ], 500);
         }
 
+        // Return URLs array for backward compatibility with existing frontend code
         return response()->json([
-            'urls' => $uploadedUrls,
-            'count' => count($uploadedUrls),
+            'urls' => array_column($uploadedImages, 'url'),
+            'images' => $uploadedImages, // Full image data
+            'count' => count($uploadedImages),
         ]);
     }
-}
 
+    /**
+     * Delete an image from Cloudflare Images
+     */
+    public function destroy(Request $request, $id)
+    {
+        $image = Image::where('id', $id)
+            ->where('user_id', $request->user()->id)
+            ->firstOrFail();
+
+        $accountId = config('services.cloudflare.account_id');
+        $apiToken = config('services.cloudflare.api_token');
+
+        try {
+            // Delete from Cloudflare
+            $response = Http::withToken($apiToken)
+                ->delete("https://api.cloudflare.com/client/v4/accounts/{$accountId}/images/v1/{$image->image_id}");
+
+            if (!$response->successful()) {
+                Log::warning('Cloudflare Images delete failed (continuing anyway)', [
+                    'status' => $response->status(),
+                    'image_id' => $image->image_id,
+                    'response' => $response->body(),
+                ]);
+                // Continue to delete from DB even if Cloudflare delete fails
+            }
+
+            // Delete from database
+            $image->delete();
+
+            Log::info('Image deleted', [
+                'image_id' => $image->image_id,
+                'user_id' => $request->user()->id,
+            ]);
+
+            return response()->json([
+                'message' => 'Image deleted successfully',
+                'deleted' => true,
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Image deletion error', [
+                'error' => $e->getMessage(),
+                'image_id' => $image->image_id,
+            ]);
+            
+            return response()->json([
+                'message' => 'Failed to delete image',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all images for the authenticated user
+     */
+    public function index(Request $request)
+    {
+        $images = Image::where('user_id', $request->user()->id)
+            ->orderBy('created_at', 'desc')
+            ->paginate(20);
+
+        return response()->json($images);
+    }
+}

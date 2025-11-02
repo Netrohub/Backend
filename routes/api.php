@@ -58,9 +58,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
 
-        // Image upload (require KYC verification)
+        // Images (require KYC verification)
         Route::middleware('kycVerified')->group(function () {
             Route::post('/images/upload', [ImageController::class, 'upload']);
+            Route::get('/images', [ImageController::class, 'index']); // Get user's uploaded images
+            Route::delete('/images/{id}', [ImageController::class, 'destroy']); // Delete image
         });
 
         // Listings (require KYC verification for creating/updating/deleting)
