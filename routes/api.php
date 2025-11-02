@@ -8,8 +8,10 @@ use App\Http\Controllers\KycController;
 use App\Http\Controllers\LeaderboardController;
 use App\Http\Controllers\ListingController;
 use App\Http\Controllers\MemberController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\WalletController;
 use App\Http\Controllers\WebhookController;
 use Illuminate\Http\Request;
@@ -92,6 +94,17 @@ Route::prefix('v1')->group(function () {
         Route::post('/kyc/sync', [KycController::class, 'sync']); // Manual sync from Persona
         Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig']); // Diagnostic endpoint
         
+        // Notifications
+        Route::get('/notifications', [NotificationController::class, 'index']);
+        Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+        Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+        Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
+        Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+        Route::delete('/notifications/read/all', [NotificationController::class, 'deleteAllRead']);
+        
+        // Settings (public read access for certain settings)
+        Route::get('/settings/{key}', [SettingsController::class, 'show']);
+        
         // Payment callback (handled by frontend, but route exists for reference)
         // Frontend should handle: /orders/{id}/payment/callback
         // This route would be in web.php if backend needs to handle callback
@@ -105,6 +118,16 @@ Route::prefix('v1')->group(function () {
             Route::get('/listings', [AdminController::class, 'listings']);
             Route::get('/orders', [AdminController::class, 'orders']);
             Route::get('/kyc', [AdminController::class, 'kyc']);
+            
+            // Admin Notifications (create notifications for users)
+            Route::post('/notifications', [NotificationController::class, 'store']);
+            
+            // Admin Settings
+            Route::get('/settings', [SettingsController::class, 'index']);
+            Route::post('/settings', [SettingsController::class, 'store']);
+            Route::put('/settings/{key}', [SettingsController::class, 'update']);
+            Route::post('/settings/bulk', [SettingsController::class, 'bulkUpdate']);
+            Route::delete('/settings/{key}', [SettingsController::class, 'destroy']);
         });
     });
 });
