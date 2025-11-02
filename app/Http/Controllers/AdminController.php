@@ -198,7 +198,8 @@ class AdminController extends Controller
      */
     public function activity(Request $request)
     {
-        $activities = \Illuminate\Support\Facades\Cache::remember('admin_recent_activity', 60, function () {
+        // Get logs (cached for 1 minute)
+        $logs = \Illuminate\Support\Facades\Cache::remember('admin_recent_activity_logs', 60, function () {
             return \App\Models\AuditLog::with('user')
                 ->whereIn('action', [
                     'user.registered',
@@ -209,15 +210,17 @@ class AdminController extends Controller
                 ])
                 ->orderBy('created_at', 'desc')
                 ->limit(10)
-                ->get()
-                ->map(function ($log) {
-                    return [
-                        'action' => $this->formatAction($log->action),
-                        'user' => $log->user->name ?? 'مستخدم محذوف',
-                        'timestamp' => $log->created_at->toIso8601String(),
-                        'color' => $this->getActionColor($log->action),
-                    ];
-                });
+                ->get();
+        });
+
+        // Map to response format (outside cache to access $this)
+        $activities = $logs->map(function ($log) {
+            return [
+                'action' => $this->formatAction($log->action),
+                'user' => $log->user->name ?? 'مستخدم محذوف',
+                'timestamp' => $log->created_at->toIso8601String(),
+                'color' => $this->getActionColor($log->action),
+            ];
         });
 
         return response()->json($activities);
