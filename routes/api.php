@@ -57,6 +57,7 @@ Route::prefix('v1')->group(function () {
         // Auth
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
+        Route::get('/user/stats', [AuthController::class, 'stats']);
 
         // Images (require KYC verification)
         Route::middleware('kycVerified')->group(function () {
