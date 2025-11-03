@@ -112,7 +112,12 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getAverageRatingAttribute()
     {
-        return round($this->reviewsReceived()->avg('rating') ?? 0, 1);
+        try {
+            return round($this->reviewsReceived()->avg('rating') ?? 0, 1);
+        } catch (\Exception $e) {
+            // Reviews table doesn't exist yet
+            return 0;
+        }
     }
 
     /**
@@ -120,7 +125,12 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getTotalReviewsAttribute()
     {
-        return $this->reviewsReceived()->count();
+        try {
+            return $this->reviewsReceived()->count();
+        } catch (\Exception $e) {
+            // Reviews table doesn't exist yet
+            return 0;
+        }
     }
 
     // Helper methods
