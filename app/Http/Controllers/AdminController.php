@@ -178,11 +178,11 @@ class AdminController extends Controller
                 $currentMonthRevenue = Order::where('status', 'completed')
                     ->whereMonth('created_at', $now->month)
                     ->whereYear('created_at', $now->year)
-                    ->sum('total_price') ?? 0;
+                    ->sum('amount') ?? 0;
                 $lastMonthRevenue = Order::where('status', 'completed')
                     ->whereMonth('created_at', $lastMonth->month)
                     ->whereYear('created_at', $lastMonth->year)
-                    ->sum('total_price') ?? 0;
+                    ->sum('amount') ?? 0;
                 $revenueGrowth = $calculateGrowth($currentMonthRevenue, $lastMonthRevenue);
 
                 return [
@@ -336,7 +336,7 @@ class AdminController extends Controller
             // Return to buyer's wallet
             $buyerWallet = $order->buyer->wallet;
             if ($buyerWallet) {
-                $buyerWallet->available_balance += $order->total_price;
+                $buyerWallet->available_balance += $order->amount;
                 $buyerWallet->save();
             }
         }
