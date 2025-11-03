@@ -66,6 +66,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/user/activity', [AuthController::class, 'activity']);
         Route::put('/user/profile', [AuthController::class, 'updateProfile']);
         Route::put('/user/password', [AuthController::class, 'updatePassword']);
+        
+        // Email verification
+        Route::post('/email/resend', [AuthController::class, 'sendVerificationEmail'])->name('verification.send');
 
         // Images (require KYC verification)
         Route::middleware('kycVerified')->group(function () {

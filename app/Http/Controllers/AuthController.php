@@ -238,4 +238,50 @@ class AuthController extends Controller
 
         return $titles[$action] ?? $action;
     }
+
+    /**
+     * Send email verification notification
+     */
+    public function sendVerificationEmail(Request $request)
+    {
+        if ($request->user()->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'البريد الإلكتروني موثق بالفعل'
+            ], 400);
+        }
+
+        $request->user()->sendEmailVerificationNotification();
+
+        return response()->json([
+            'message' => 'تم إرسال رسالة التحقق إلى بريدك الإلكتروني'
+        ]);
+    }
+
+    /**
+     * Mark the authenticated user's email address as verified
+     */
+    public function verifyEmail(Request $request)
+    {
+        $user = User::findOrFail($request->route('id'));
+
+        if (!hash_equals((string) $request->route('hash'), sha1($user->getEmailForVerification()))) {
+            return response()->json([
+                'message' => 'رابط التحقق غير صالح'
+            ], 403);
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'البريد الإلكتروني موثق بالفعل',
+                'verified' => true
+            ]);
+        }
+
+        $user->markEmailAsVerified();
+
+        return response()->json([
+            'message' => 'تم توثيق البريد الإلكتروني بنجاح',
+            'verified' => true
+        ]);
+    }
 }
