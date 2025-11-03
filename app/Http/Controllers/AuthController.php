@@ -87,9 +87,26 @@ class AuthController extends Controller
                 'password' => 'required',
             ]);
 
-            $user = User::where('email', $request->email)->first();
+            // Trim email but NOT password (mobile keyboards add spaces to email)
+            $email = trim($request->email);
+            $password = $request->password; // Don't trim password!
 
-            if (!$user || !Hash::check($request->password, $user->password)) {
+            // Debug logging (remove after testing)
+            Log::info('Login attempt', [
+                'email' => $email,
+                'password_length' => strlen($password),
+                'has_leading_space' => $password !== ltrim($password),
+                'has_trailing_space' => $password !== rtrim($password),
+            ]);
+
+            $user = User::where('email', $email)->first();
+
+            if (!$user || !Hash::check($password, $user->password)) {
+                Log::warning('Login failed', [
+                    'email' => $email,
+                    'user_exists' => !!$user,
+                    'password_length' => strlen($password),
+                ]);
                 throw ValidationException::withMessages([
                     'email' => [MessageHelper::AUTH_INVALID_CREDENTIALS],
                 ]);
