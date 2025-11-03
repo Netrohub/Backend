@@ -24,7 +24,7 @@ class AuthController extends Controller
 
             $user = User::create([
                 'name' => $validated['name'],
-                'email' => $validated['email'],
+                'email' => strtolower($validated['email']), // Store email in lowercase
                 'password' => Hash::make($validated['password']),
                 'phone' => $validated['phone'] ?? null,
             ]);
@@ -87,13 +87,14 @@ class AuthController extends Controller
                 'password' => 'required',
             ]);
 
-            // Trim email but NOT password (mobile keyboards add spaces to email)
-            $email = trim($request->email);
+            // Trim and lowercase email (mobile keyboards capitalize first letter)
+            $email = strtolower(trim($request->email));
             $password = $request->password; // Don't trim password!
 
             // Debug logging (remove after testing)
             Log::info('Login attempt', [
                 'email' => $email,
+                'original_email' => $request->email,
                 'password_length' => strlen($password),
                 'has_leading_space' => $password !== ltrim($password),
                 'has_trailing_space' => $password !== rtrim($password),
