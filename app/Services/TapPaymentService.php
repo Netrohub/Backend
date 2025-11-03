@@ -20,17 +20,33 @@ class TapPaymentService
 
     public function createCharge(array $data): array
     {
+        Log::info('Tap Charge Request', [
+            'url' => $this->baseUrl . '/charges',
+            'data' => $data,
+            'api_key_length' => strlen($this->secretKey),
+        ]);
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->secretKey,
             'Content-Type' => 'application/json',
         ])->post($this->baseUrl . '/charges', $data);
 
-        Log::info('Tap Charge Created', [
-            'request' => $data,
-            'response' => $response->json(),
+        $responseData = $response->json();
+
+        Log::info('Tap Charge Response', [
+            'status_code' => $response->status(),
+            'response' => $responseData,
+            'success' => $response->successful(),
         ]);
 
-        return $response->json();
+        if (!$response->successful()) {
+            Log::error('Tap Charge Failed', [
+                'status' => $response->status(),
+                'error' => $responseData,
+            ]);
+        }
+
+        return $responseData;
     }
 
     public function retrieveCharge(string $chargeId): array
