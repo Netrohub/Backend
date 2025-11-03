@@ -148,7 +148,7 @@ class AuthController extends Controller
         return response()->json([
             'total_sales' => $user->ordersAsSeller()->where('status', 'completed')->count(),
             'total_purchases' => $user->ordersAsBuyer()->where('status', 'completed')->count(),
-            'total_revenue' => (float) ($user->ordersAsSeller()->where('status', 'completed')->sum('total_price') ?? 0),
+            'total_revenue' => (float) ($user->ordersAsSeller()->where('status', 'completed')->sum('amount') ?? 0),
             'active_listings' => $user->listings()->where('status', 'active')->count(),
             'total_listings' => $user->listings()->count(),
             'member_since' => $user->created_at->format('Y-m-d'),
