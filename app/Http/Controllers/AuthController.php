@@ -39,11 +39,15 @@ class AuthController extends Controller
                 ]);
             }
 
+            // Send email verification notification
+            $user->sendEmailVerificationNotification();
+
             $token = $user->createToken('auth-token')->plainTextToken;
 
             return response()->json([
                 'user' => $user->load('wallet'),
                 'token' => $token,
+                'message' => 'تم إنشاء الحساب بنجاح. تحقق من بريدك الإلكتروني لتفعيل الحساب.',
             ], 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
