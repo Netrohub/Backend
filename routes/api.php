@@ -15,6 +15,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\WalletController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\ReviewController;
+use App\Http\Controllers\SuggestionController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -52,6 +53,10 @@ Route::prefix('v1')->group(function () {
     // Public reviews
     Route::get('/reviews/seller/{sellerId}', [ReviewController::class, 'index']);
     Route::get('/reviews/seller/{sellerId}/stats', [ReviewController::class, 'stats']);
+
+    // Public suggestions and platform reviews
+    Route::get('/suggestions', [SuggestionController::class, 'index']);
+    Route::get('/platform/stats', [SuggestionController::class, 'platformStats']);
 
     // Webhooks (no auth required, but rate limited by IP)
     // Rate limit: 60 requests per minute per IP to prevent DoS attacks
@@ -135,6 +140,12 @@ Route::prefix('v1')->group(function () {
         // Payment callback (handled by frontend, but route exists for reference)
         // Frontend should handle: /orders/{id}/payment/callback
         // This route would be in web.php if backend needs to handle callback
+
+        // Suggestions and Platform Reviews
+        Route::post('/suggestions', [SuggestionController::class, 'store']);
+        Route::post('/suggestions/{id}/vote', [SuggestionController::class, 'vote']);
+        Route::post('/platform/review', [SuggestionController::class, 'submitPlatformReview']);
+        Route::get('/platform/review/user', [SuggestionController::class, 'getUserPlatformReview']);
 
         // Admin routes (require admin role)
         Route::prefix('admin')->middleware('admin')->group(function () {
