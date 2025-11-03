@@ -30,11 +30,9 @@ RUN composer dump-autoload --optimize --no-interaction
 # Laravel caches (ignore failures on first build)
 # Note: config:cache is NOT run here because environment variables aren't available during build
 # Config will be read fresh from environment variables at runtime
-# Clear route cache first to ensure fresh routes, then cache them
-# Only cache routes and views (these don't depend on env vars)
-RUN php artisan route:clear || true \
- && php artisan route:cache || true \
- && php artisan view:cache || true
+# We clear caches at runtime (in CMD) to ensure fresh routes after each deployment
+# Only cache views during build (views don't depend on env vars or routes)
+RUN php artisan view:cache || true
 
 # FrankenPHP configuration
 ENV SERVER_NAME=:8080
@@ -43,5 +41,6 @@ EXPOSE 8080
 
 # Default command - Use Laravel's built-in server for Render compatibility
 # Render will route HTTP traffic to port 8080
-CMD php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
+# Clear caches on startup to ensure fresh routes/config
+CMD php artisan route:clear && php artisan config:clear && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
 

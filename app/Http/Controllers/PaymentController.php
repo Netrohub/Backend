@@ -51,7 +51,7 @@ class PaymentController extends Controller
                 'url' => config('app.frontend_url') . '/orders/' . $order->id . '/payment/callback',
             ],
             'post' => [
-                'url' => config('app.url') . '/api/v1/webhooks/tap',
+                'url' => config('app.url') . '/api/v1/webhook/tap',
             ],
             'metadata' => [
                 'order_id' => $order->id,
