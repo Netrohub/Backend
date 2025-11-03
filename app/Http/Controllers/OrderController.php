@@ -56,6 +56,10 @@ class OrderController extends Controller
         try {
             // Wrap order creation in transaction for data consistency
             $order = DB::transaction(function () use ($validated, $listing, $request) {
+                // Mark listing as sold immediately to prevent double purchases
+                $listing->status = 'sold';
+                $listing->save();
+                
                 return Order::create([
                     'listing_id' => $listing->id,
                     'buyer_id' => $request->user()->id,
