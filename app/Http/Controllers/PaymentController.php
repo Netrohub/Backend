@@ -39,7 +39,7 @@ class PaymentController extends Controller
         // Create Tap charge
         $chargeData = [
             'amount' => $order->amount,
-            'currency' => 'USD',
+            'currency' => 'SAR',
             'customer' => [
                 'first_name' => $request->user()->name,
                 'email' => $request->user()->email,
@@ -74,7 +74,7 @@ class PaymentController extends Controller
                     'tap_reference' => $tapResponse['reference'] ?? null,
                     'status' => 'initiated',
                     'amount' => $order->amount,
-                    'currency' => 'USD',
+                    'currency' => 'SAR',
                     'tap_response' => $tapResponse,
                 ]);
 
