@@ -18,7 +18,7 @@ class ImageController extends Controller
         // Validate uploaded files
         $validated = $request->validate([
             'images' => 'required|array|max:11', // Up to 11 images (8 listing + 3 bills)
-            'images.*' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:10240', // Max 10MB per image
+            'images.*' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:5120', // Max 5MB per image
         ]);
 
         $uploadedImages = [];
