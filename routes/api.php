@@ -36,6 +36,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
         Route::post('/login', [AuthController::class, 'login']);
     });
+    
+    // Email verification (requires signed URL)
+    Route::get('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])
+        ->middleware('signed')
+        ->name('verification.verify');
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/members', [MemberController::class, 'index']);
     Route::get('/members/{id}', [MemberController::class, 'show']);
