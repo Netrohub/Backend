@@ -42,10 +42,38 @@ class TapPaymentService
         return $response->json();
     }
 
-    public function verifyWebhookSignature(array $payload, string $signature): bool
+    public function verifyWebhookSignature(array $payload, ?string $hashstring): bool
     {
-        $calculatedSignature = hash_hmac('sha256', json_encode($payload), config('services.tap.webhook_secret'));
-        return hash_equals($calculatedSignature, $signature);
+        if (!$hashstring) {
+            return false;
+        }
+
+        // Extract values according to Tap webhook documentation
+        $id = $payload['id'] ?? '';
+        $amount = $payload['amount'] ?? 0;
+        $currency = $payload['currency'] ?? '';
+        $gateway_reference = $payload['reference']['gateway'] ?? '';
+        $payment_reference = $payload['reference']['payment'] ?? '';
+        $status = $payload['status'] ?? '';
+        $created = $payload['transaction']['created'] ?? '';
+
+        // Round amount to proper decimal places based on currency
+        $decimalPlaces = in_array($currency, ['BHD', 'KWD', 'OMR']) ? 3 : 2;
+        $amount = number_format((float)$amount, $decimalPlaces, '.', '');
+
+        // Build hashstring according to Tap documentation
+        $toBeHashedString = 'x_id' . $id . 
+                           'x_amount' . $amount . 
+                           'x_currency' . $currency . 
+                           'x_gateway_reference' . $gateway_reference . 
+                           'x_payment_reference' . $payment_reference . 
+                           'x_status' . $status . 
+                           'x_created' . $created;
+
+        // Calculate hash using your Tap secret key
+        $calculatedHash = hash_hmac('sha256', $toBeHashedString, $this->secretKey);
+
+        return hash_equals($calculatedHash, $hashstring);
     }
 
     /**

@@ -32,11 +32,14 @@ class WebhookController extends Controller
         
         Log::info('Tap Webhook Received', ['payload' => $payload]);
 
-        // Verify webhook signature if configured
+        // Verify webhook hashstring if configured
         if (config('services.tap.webhook_secret')) {
-            $signature = $request->header('X-Tap-Signature');
-            if (!$this->tapService->verifyWebhookSignature($payload, $signature)) {
-                Log::warning('Tap Webhook Signature Invalid');
+            $hashstring = $request->header('hashstring');
+            if (!$this->tapService->verifyWebhookSignature($payload, $hashstring)) {
+                Log::warning('Tap Webhook Hashstring Invalid', [
+                    'received_hashstring' => $hashstring,
+                    'charge_id' => $payload['id'] ?? null,
+                ]);
                 return response()->json(['message' => MessageHelper::WEBHOOK_INVALID_SIGNATURE], 401);
             }
         }
