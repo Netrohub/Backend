@@ -75,7 +75,7 @@ class WalletController extends Controller
             try {
                 $transferData = [
                     'amount' => $validated['amount'],
-                    'currency' => 'SAR',
+                    'currency' => 'USD',
                     'destination' => [
                         'type' => 'bank_account',
                         'bank_account' => $validated['bank_account'],
