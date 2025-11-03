@@ -80,7 +80,7 @@ class WebhookController extends Controller
         // Handle CAPTURED status - credit buyer and move to escrow
         if ($status === 'CAPTURED' && $order->status === 'pending') {
             // Wrap in transaction to prevent race conditions
-            DB::transaction(function () use ($order) {
+            DB::transaction(function () use ($order, $request) {
                 // Get buyer wallet with lock
                 $buyerWallet = Wallet::lockForUpdate()
                     ->firstOrCreate(
