@@ -32,7 +32,11 @@ class NotificationController extends Controller
 
         $query->orderBy('created_at', 'desc');
 
-        $notifications = PaginationHelper::paginate($query, $request);
+        // Manual pagination for Query Builder (not Eloquent)
+        $page = $request->input('page', 1);
+        $perPage = min($request->input('per_page', 20), 100);
+        
+        $notifications = $query->paginate($perPage, ['*'], 'page', $page);
 
         return response()->json($notifications);
     }
