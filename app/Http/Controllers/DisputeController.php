@@ -13,20 +13,28 @@ use App\Helpers\AuditHelper;
 
 class DisputeController extends Controller
 {
+    // Dispute creation deadline (14 days from order creation)
+    const DISPUTE_DEADLINE_DAYS = 14;
+
     public function index(Request $request)
     {
         $user = $request->user();
         
-        $disputes = PaginationHelper::paginate(
-            Dispute::with(['order', 'initiator', 'resolver'])
-                ->whereHas('order', function($query) use ($user) {
-                    $query->withActiveUsers() // Only show disputes for orders with active users
-                          ->where('buyer_id', $user->id)
-                          ->orWhere('seller_id', $user->id);
-                })
-                ->orderBy('created_at', 'desc'),
-            $request
-        );
+        $query = Dispute::with(['order', 'initiator', 'resolver'])
+            ->whereHas('order', function($q) use ($user) {
+                $q->withActiveUsers() // Only show disputes for orders with active users
+                  ->where('buyer_id', $user->id)
+                  ->orWhere('seller_id', $user->id);
+            });
+
+        // Filter by status
+        if ($request->has('status') && $request->status !== 'all') {
+            $query->where('status', $request->status);
+        }
+
+        $query->orderBy('created_at', 'desc');
+        
+        $disputes = PaginationHelper::paginate($query, $request);
 
         return response()->json($disputes);
     }
@@ -55,6 +63,16 @@ class DisputeController extends Controller
         // Order must be in escrow_hold status
         if ($order->status !== 'escrow_hold') {
             return response()->json(['message' => MessageHelper::DISPUTE_ONLY_ESCROW], 400);
+        }
+
+        // Check if order is within dispute deadline (14 days)
+        $orderAge = now()->diffInDays($order->created_at);
+        if ($orderAge > self::DISPUTE_DEADLINE_DAYS) {
+            return response()->json([
+                'message' => "لا يمكن فتح نزاع على طلب مضى عليه أكثر من " . self::DISPUTE_DEADLINE_DAYS . " يوماً",
+                'error_code' => 'DISPUTE_DEADLINE_PASSED',
+                'deadline_days' => self::DISPUTE_DEADLINE_DAYS,
+            ], 400);
         }
 
         $dispute = Dispute::create([
@@ -220,5 +238,57 @@ class DisputeController extends Controller
         }
 
         return response()->json($dispute->load(['order', 'initiator', 'resolver']));
+    }
+
+    /**
+     * Cancel a dispute (user can cancel own open dispute)
+     */
+    public function cancel(Request $request, $id)
+    {
+        $dispute = Dispute::findOrFail($id);
+        $user = $request->user();
+
+        // Only initiator can cancel
+        if ($dispute->initiated_by !== $user->id) {
+            return response()->json([
+                'message' => 'يمكن فقط للمُبلّغ إلغاء النزاع'
+            ], 403);
+        }
+
+        // Can only cancel if still 'open'
+        if ($dispute->status !== 'open') {
+            return response()->json([
+                'message' => 'لا يمكن إلغاء النزاع بعد بدء المراجعة',
+                'error_code' => 'DISPUTE_CANNOT_CANCEL',
+            ], 400);
+        }
+
+        DB::transaction(function () use ($dispute) {
+            // Update dispute status
+            $dispute->status = 'closed';
+            $dispute->resolution_notes = 'تم الإلغاء من قبل المُبلّغ';
+            $dispute->resolved_at = now();
+            $dispute->save();
+
+            // Restore order to escrow_hold status
+            $order = $dispute->order;
+            $order->status = 'escrow_hold';
+            $order->save();
+        });
+
+        // Audit log
+        AuditHelper::log(
+            'dispute.cancelled',
+            Dispute::class,
+            $dispute->id,
+            ['status' => 'open'],
+            ['status' => 'closed', 'cancelled_by' => $user->id],
+            $request
+        );
+
+        return response()->json([
+            'message' => 'تم إلغاء النزاع بنجاح',
+            'dispute' => $dispute->fresh()->load(['order', 'initiator']),
+        ]);
     }
 }

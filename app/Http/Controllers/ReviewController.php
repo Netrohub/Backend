@@ -204,7 +204,20 @@ class ReviewController extends Controller
 
         // Cannot report own review
         if ($review->reviewer_id === $request->user()->id) {
-            return response()->json(['message' => 'Cannot report your own review'], 400);
+            return response()->json(['message' => 'لا يمكنك الإبلاغ عن تقييمك الخاص'], 400);
+        }
+
+        // Check if user already reported this review
+        $existingReport = DB::table('review_reports')
+            ->where('review_id', $review->id)
+            ->where('reporter_id', $request->user()->id)
+            ->first();
+
+        if ($existingReport) {
+            return response()->json([
+                'message' => 'لقد قمت بالإبلاغ عن هذا التقييم من قبل',
+                'error_code' => 'ALREADY_REPORTED',
+            ], 400);
         }
 
         DB::table('review_reports')->insert([
@@ -216,6 +229,6 @@ class ReviewController extends Controller
             'updated_at' => now(),
         ]);
 
-        return response()->json(['message' => 'Review reported successfully']);
+        return response()->json(['message' => 'تم الإبلاغ عن التقييم بنجاح']);
     }
 }

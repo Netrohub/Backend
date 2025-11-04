@@ -23,7 +23,30 @@ class DisputeCreated extends Notification implements ShouldQueue
      */
     public function via(object $notifiable): array
     {
-        return ['mail'];
+        return ['mail', 'database'];
+    }
+
+    /**
+     * Get the database representation of the notification.
+     */
+    public function toDatabase(object $notifiable): array
+    {
+        $order = $this->dispute->order;
+        $isInitiator = $notifiable->id === $this->dispute->initiated_by;
+
+        return [
+            'type' => 'dispute',
+            'title' => $isInitiator ? 'تم فتح النزاع' : 'تم فتح نزاع على طلبك',
+            'message' => "نزاع على طلب #{$order->id} - {$this->dispute->reason}",
+            'icon' => 'AlertTriangle',
+            'color' => 'text-yellow-400',
+            'data' => [
+                'dispute_id' => $this->dispute->id,
+                'order_id' => $order->id,
+                'status' => $this->dispute->status,
+            ],
+            'read' => false,
+        ];
     }
 
     /**

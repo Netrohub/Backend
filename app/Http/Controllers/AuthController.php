@@ -7,7 +7,9 @@ use App\Models\Wallet;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rules\Password;
 use App\Http\Controllers\MessageHelper;
 
 class AuthController extends Controller
@@ -18,7 +20,16 @@ class AuthController extends Controller
             $validated = $request->validate([
                 'name' => 'required|string|max:255',
                 'email' => 'required|string|email|max:255|unique:users',
-                'password' => 'required|string|min:8|confirmed',
+                'password' => [
+                    'required',
+                    'string',
+                    'confirmed',
+                    Password::min(8)
+                        ->mixedCase()       // Requires uppercase and lowercase
+                        ->numbers()         // Requires at least one number
+                        ->symbols()         // Requires at least one special character
+                        ->uncompromised()   // Check against data breaches
+                ],
                 'phone' => 'nullable|string|max:20',
             ]);
 
@@ -233,19 +244,93 @@ class AuthController extends Controller
     {
         $validated = $request->validate([
             'current_password' => 'required|string',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => [
+                'required',
+                'string',
+                'confirmed',
+                Password::min(8)
+                    ->mixedCase()       // Requires uppercase and lowercase
+                    ->numbers()         // Requires at least one number
+                    ->symbols()         // Requires at least one special character
+                    ->uncompromised()   // Check against data breaches
+            ],
         ]);
 
         $user = $request->user();
 
-        if (!Hash::check($validated['current_password'], $user->password)) {
-            return response()->json(['message' => 'Current password is incorrect'], 400);
+        // Check for too many failed attempts
+        $cacheKey = "password_change_attempts:{$user->id}";
+        $attempts = Cache::get($cacheKey, 0);
+        
+        if ($attempts >= 5) {
+            $expiresAt = Cache::get($cacheKey . ':expires_at');
+            $minutesRemaining = $expiresAt ? now()->diffInMinutes($expiresAt) : 15;
+            
+            return response()->json([
+                'message' => "محاولات كثيرة جداً. يرجى المحاولة مرة أخرى بعد {$minutesRemaining} دقيقة",
+                'error_code' => 'TOO_MANY_ATTEMPTS',
+                'retry_after' => $minutesRemaining,
+            ], 429);
         }
 
+        // Verify current password
+        if (!Hash::check($validated['current_password'], $user->password)) {
+            // Increment failed attempts
+            $newAttempts = $attempts + 1;
+            $expiresAt = now()->addMinutes(15);
+            Cache::put($cacheKey, $newAttempts, $expiresAt);
+            Cache::put($cacheKey . ':expires_at', $expiresAt, $expiresAt);
+            
+            return response()->json([
+                'message' => 'كلمة المرور الحالية غير صحيحة',
+                'error_code' => 'INVALID_CURRENT_PASSWORD',
+                'attempts_remaining' => max(0, 5 - $newAttempts),
+            ], 400);
+        }
+
+        // Clear failed attempts on success
+        Cache::forget($cacheKey);
+        Cache::forget($cacheKey . ':expires_at');
+
+        // Update password
         $user->password = Hash::make($validated['password']);
         $user->save();
 
-        return response()->json(['message' => 'Password updated successfully']);
+        // CRITICAL: Revoke all tokens except current one
+        $currentToken = $request->user()->currentAccessToken();
+        $revokedCount = $user->tokens()->where('id', '!=', $currentToken->id)->delete();
+
+        // Log the password change for audit trail
+        \App\Models\AuditLog::create([
+            'user_id' => $user->id,
+            'action' => 'password.changed',
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'metadata' => [
+                'initiated_by' => 'user',
+                'tokens_revoked' => $revokedCount,
+            ],
+        ]);
+
+        // Send email notification
+        try {
+            $user->notify(new \App\Notifications\PasswordChanged(
+                now()->toDateTimeString(),
+                $request->ip(),
+                $request->userAgent()
+            ));
+        } catch (\Exception $e) {
+            Log::warning('Failed to send password change notification', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+            // Don't fail the password change if email fails
+        }
+
+        return response()->json([
+            'message' => 'تم تحديث كلمة المرور بنجاح. تم تسجيل الخروج من جميع الأجهزة الأخرى.',
+            'tokens_revoked' => $revokedCount,
+        ]);
     }
 
     private function formatActivityTitle($action, $metadata)

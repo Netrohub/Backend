@@ -24,7 +24,37 @@ class DisputeResolved extends Notification implements ShouldQueue
      */
     public function via(object $notifiable): array
     {
-        return ['mail'];
+        return ['mail', 'database'];
+    }
+
+    /**
+     * Get the database representation of the notification.
+     */
+    public function toDatabase(object $notifiable): array
+    {
+        $order = $this->dispute->order;
+        $isBuyer = $notifiable->id === $order->buyer_id;
+        
+        $resolutionMessage = match($this->resolution) {
+            'refund_buyer' => $isBuyer ? 'سيتم استرداد المبلغ' : 'سيتم استرداد المبلغ للمشتري',
+            'release_to_seller' => $isBuyer ? 'تم تحرير الأموال للبائع' : 'تم تحرير الأموال إلى محفظتك',
+            default => 'تم حل النزاع',
+        };
+
+        return [
+            'type' => 'dispute',
+            'title' => 'تم حل النزاع',
+            'message' => "نزاع طلب #{$order->id} - {$resolutionMessage}",
+            'icon' => 'AlertTriangle',
+            'color' => 'text-green-400',
+            'data' => [
+                'dispute_id' => $this->dispute->id,
+                'order_id' => $order->id,
+                'status' => 'resolved',
+                'resolution' => $this->resolution,
+            ],
+            'read' => false,
+        ];
     }
 
     /**

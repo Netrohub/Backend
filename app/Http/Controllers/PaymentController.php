@@ -13,6 +13,10 @@ use App\Http\Controllers\MessageHelper;
 
 class PaymentController extends Controller
 {
+    // Exchange rate: USD to SAR
+    // Update this periodically or use exchange rate API
+    const USD_TO_SAR_RATE = 3.75;
+
     public function __construct(
         private TapPaymentService $tapService
     ) {}
@@ -36,9 +40,21 @@ class PaymentController extends Controller
         // Ensure buyer has sufficient balance (if wallet-based payment)
         // For Tap, we'll just create the charge and handle balance on webhook
 
+        // Convert USD amount to SAR for Tap payment gateway
+        // Order amount is stored in USD, but Tap requires SAR
+        $amountUSD = $order->amount;
+        $amountSAR = round($amountUSD * self::USD_TO_SAR_RATE, 2);
+
+        \Illuminate\Support\Facades\Log::info('Payment currency conversion', [
+            'order_id' => $order->id,
+            'amount_usd' => $amountUSD,
+            'amount_sar' => $amountSAR,
+            'exchange_rate' => self::USD_TO_SAR_RATE,
+        ]);
+
         // Create Tap charge
         $chargeData = [
-            'amount' => $order->amount,
+            'amount' => $amountSAR, // ✅ Converted to SAR
             'currency' => 'SAR',
             'customer' => [
                 'first_name' => $request->user()->name,
@@ -57,6 +73,7 @@ class PaymentController extends Controller
                 'order_id' => $order->id,
                 'buyer_id' => $order->buyer_id,
                 'seller_id' => $order->seller_id,
+                'amount_usd' => $amountUSD, // Store original USD amount for reference
             ],
         ];
 

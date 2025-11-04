@@ -38,17 +38,17 @@ Route::prefix('v1')->group(function () {
         Route::post('/login', [AuthController::class, 'login']);
     });
     
-    // Email verification (requires signed URL)
+    // Email verification (requires signed URL, rate limited to prevent abuse)
     Route::get('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])
-        ->middleware('signed')
+        ->middleware(['signed', 'throttle:10,60']) // 10 per hour
         ->name('verification.verify');
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/members', [MemberController::class, 'index']);
     Route::get('/members/{id}', [MemberController::class, 'show']);
     
     // Listings (public - anyone can browse, but creating/updating requires auth)
-    Route::get('/listings', [ListingController::class, 'index']);
-    Route::get('/listings/{id}', [ListingController::class, 'show']);
+    Route::get('/listings', [ListingController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/listings/{id}', [ListingController::class, 'show'])->middleware('throttle:30,1');
     
     // Public reviews
     Route::get('/reviews/seller/{sellerId}', [ReviewController::class, 'index']);
@@ -75,10 +75,16 @@ Route::prefix('v1')->group(function () {
         Route::get('/user/stats', [AuthController::class, 'stats']);
         Route::get('/user/activity', [AuthController::class, 'activity']);
         Route::put('/user/profile', [AuthController::class, 'updateProfile']);
-        Route::put('/user/password', [AuthController::class, 'updatePassword']);
         
-        // Email verification
-        Route::post('/email/resend', [AuthController::class, 'sendVerificationEmail'])->name('verification.send');
+        // Password change with rate limiting (5 attempts per 60 minutes)
+        Route::middleware('throttle:5,60')->group(function () {
+            Route::put('/user/password', [AuthController::class, 'updatePassword']);
+        });
+        
+        // Email verification (strict rate limit to prevent email spam)
+        Route::post('/email/resend', [AuthController::class, 'sendVerificationEmail'])
+            ->middleware('throttle:3,60') // 3 per hour (very strict - prevent spam)
+            ->name('verification.send');
 
         // Images (require KYC verification)
         Route::middleware('kycVerified')->group(function () {
@@ -90,49 +96,94 @@ Route::prefix('v1')->group(function () {
 
         // Listings (require KYC verification for creating/updating/deleting)
         Route::middleware('kycVerified')->group(function () {
-            Route::post('/listings', [ListingController::class, 'store']);
-            Route::put('/listings/{id}', [ListingController::class, 'update']);
-            Route::delete('/listings/{id}', [ListingController::class, 'destroy']);
+            Route::post('/listings', [ListingController::class, 'store'])->middleware('throttle:10,60');
+            Route::put('/listings/{id}', [ListingController::class, 'update'])->middleware('throttle:20,60');
+            Route::delete('/listings/{id}', [ListingController::class, 'destroy'])->middleware('throttle:10,60');
         });
+
+        // My listings (user's own listings only - data isolation)
+        Route::get('/my-listings', [ListingController::class, 'myListings'])->middleware('throttle:60,1');
+        
+        // Listing credentials (only accessible after purchase)
+        Route::get('/listings/{id}/credentials', [ListingController::class, 'getCredentials'])->middleware('throttle:30,1');
 
         // Orders (require email verification for creation)
         Route::middleware('verified')->group(function () {
-            Route::post('/orders', [OrderController::class, 'store']);
-            Route::post('/payments/create', [PaymentController::class, 'create']);
+            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:10,60');
+            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle:10,60');
         });
-        Route::get('/orders', [OrderController::class, 'index']);
-        Route::get('/orders/{id}', [OrderController::class, 'show']);
-        Route::put('/orders/{id}', [OrderController::class, 'update']);
+        
+        Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:60,1');
+        Route::get('/orders/{id}', [OrderController::class, 'show'])->middleware('throttle:60,1');
+        Route::put('/orders/{id}', [OrderController::class, 'update'])->middleware('throttle:20,60');
+        
+        // Order actions (confirm, cancel)
+        Route::post('/orders/{id}/confirm', [OrderController::class, 'confirm'])->middleware('throttle:10,60');
+        Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->middleware('throttle:10,60');
 
-        // Disputes
-        Route::apiResource('disputes', DisputeController::class);
+        // Disputes with rate limiting to prevent spam and abuse
+        Route::middleware('throttle:30,1')->group(function () {
+            Route::get('/disputes', [DisputeController::class, 'index']);
+            Route::get('/disputes/{dispute}', [DisputeController::class, 'show']);
+        });
+        
+        Route::middleware('throttle:5,60')->group(function () {
+            Route::post('/disputes', [DisputeController::class, 'store']);
+            Route::post('/disputes/{dispute}/cancel', [DisputeController::class, 'cancel']);
+        });
+        
+        // Admin-only dispute management (still rate limited for safety)
+        Route::middleware(['admin', 'throttle:20,1'])->group(function () {
+            Route::put('/disputes/{dispute}', [DisputeController::class, 'update']);
+            Route::delete('/disputes/{dispute}', [DisputeController::class, 'destroy']);
+        });
 
         // Reviews (protected - must be authenticated)
-        Route::post('/reviews', [ReviewController::class, 'store']);
-        Route::put('/reviews/{id}', [ReviewController::class, 'update']);
-        Route::delete('/reviews/{id}', [ReviewController::class, 'destroy']);
-        Route::post('/reviews/{id}/helpful', [ReviewController::class, 'markHelpful']);
-        Route::post('/reviews/{id}/report', [ReviewController::class, 'report']);
+        // Rate limiting to prevent spam and abuse
+        Route::middleware('throttle:10,60')->group(function () {
+            Route::post('/reviews', [ReviewController::class, 'store']);
+            Route::put('/reviews/{id}', [ReviewController::class, 'update']);
+        });
+        
+        Route::middleware('throttle:30,60')->group(function () {
+            Route::post('/reviews/{id}/helpful', [ReviewController::class, 'markHelpful']);
+        });
+        
+        Route::middleware('throttle:5,60')->group(function () {
+            Route::post('/reviews/{id}/report', [ReviewController::class, 'report']);
+            Route::delete('/reviews/{id}', [ReviewController::class, 'destroy']);
+        });
 
         // Wallet (withdrawals require email verification)
         Route::get('/wallet', [WalletController::class, 'index']);
-        Route::middleware('verified')->group(function () {
+        Route::get('/wallet/withdrawals', [WalletController::class, 'withdrawalHistory']);
+        
+        // Withdrawal endpoint with STRICT rate limiting (3 attempts per hour)
+        Route::middleware(['verified', 'throttle:3,60'])->group(function () {
             Route::post('/wallet/withdraw', [WalletController::class, 'withdraw']);
         });
 
-        // KYC
-        Route::get('/kyc', [KycController::class, 'index']);
-        Route::post('/kyc', [KycController::class, 'create']);
-        Route::post('/kyc/sync', [KycController::class, 'sync']); // Manual sync from Persona
-        Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig']); // Diagnostic endpoint
+        // KYC (strict rate limiting to prevent Persona API cost abuse)
+        Route::get('/kyc', [KycController::class, 'index'])->middleware('throttle:30,1');
+        Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:5,60'); // 5 per hour (Persona costs money!)
+        Route::post('/kyc/sync', [KycController::class, 'sync'])->middleware('throttle:10,60'); // Manual sync
+        Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:10,60'); // Diagnostic
         
-        // Notifications
-        Route::get('/notifications', [NotificationController::class, 'index']);
-        Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
-        Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
-        Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
-        Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
-        Route::delete('/notifications/read/all', [NotificationController::class, 'deleteAllRead']);
+        // Notifications with rate limiting to prevent spam
+        Route::middleware('throttle:60,1')->group(function () {
+            Route::get('/notifications', [NotificationController::class, 'index']);
+            Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+        });
+        
+        Route::middleware('throttle:30,1')->group(function () {
+            Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+            Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+        });
+        
+        Route::middleware('throttle:10,1')->group(function () {
+            Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
+            Route::delete('/notifications/read/all', [NotificationController::class, 'deleteAllRead']);
+        });
         
         // Settings (public read access for certain settings)
         Route::get('/settings/{key}', [SettingsController::class, 'show']);
@@ -147,41 +198,43 @@ Route::prefix('v1')->group(function () {
         Route::post('/platform/review', [SuggestionController::class, 'submitPlatformReview']);
         Route::get('/platform/review/user', [SuggestionController::class, 'getUserPlatformReview']);
 
-        // Admin routes (require admin role)
-        Route::prefix('admin')->middleware('admin')->group(function () {
-            // Dashboard
+        // Admin routes (require admin role with rate limiting)
+        Route::prefix('admin')->middleware(['admin', 'throttle:100,1'])->group(function () {
+            // Dashboard (read-only, can be polled)
             Route::get('/stats', [AdminController::class, 'stats']);
             Route::get('/activity', [AdminController::class, 'activity']);
             
-            // Users
+            // Read operations (generous limits for browsing)
             Route::get('/users', [AdminController::class, 'users']);
-            Route::put('/users/{id}', [AdminController::class, 'updateUser']);
-            Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
-            
-            // Listings
             Route::get('/listings', [AdminController::class, 'listings']);
-            Route::put('/listings/{id}/status', [AdminController::class, 'updateListingStatus']);
-            Route::delete('/listings/{id}', [AdminController::class, 'deleteListing']);
-            
-            // Orders
             Route::get('/orders', [AdminController::class, 'orders']);
-            Route::post('/orders/{id}/cancel', [AdminController::class, 'cancelOrder']);
-            
-            // Disputes
             Route::get('/disputes', [AdminController::class, 'disputes']);
-            
-            // KYC
             Route::get('/kyc', [AdminController::class, 'kyc']);
-            
-            // Admin Notifications (create notifications for users)
-            Route::post('/notifications', [NotificationController::class, 'store']);
-            
-            // Admin Settings
             Route::get('/settings', [SettingsController::class, 'index']);
-            Route::post('/settings', [SettingsController::class, 'store']);
-            Route::put('/settings/{key}', [SettingsController::class, 'update']);
-            Route::post('/settings/bulk', [SettingsController::class, 'bulkUpdate']);
-            Route::delete('/settings/{key}', [SettingsController::class, 'destroy']);
+            
+            // Write operations (stricter rate limiting for safety)
+            Route::middleware('throttle:30,1')->group(function () {
+                // User management
+                Route::put('/users/{id}', [AdminController::class, 'updateUser']);
+                Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
+                
+                // Listing management
+                Route::put('/listings/{id}/status', [AdminController::class, 'updateListingStatus']);
+                Route::delete('/listings/{id}', [AdminController::class, 'deleteListing']);
+                
+                // Order management
+                Route::post('/orders/{id}/cancel', [AdminController::class, 'cancelOrder']);
+                
+                // Notifications
+                Route::post('/notifications', [NotificationController::class, 'store']);
+                Route::get('/notifications/history', [NotificationController::class, 'adminHistory']);
+                
+                // Settings
+                Route::post('/settings', [SettingsController::class, 'store']);
+                Route::put('/settings/{key}', [SettingsController::class, 'update']);
+                Route::post('/settings/bulk', [SettingsController::class, 'bulkUpdate']);
+                Route::delete('/settings/{key}', [SettingsController::class, 'destroy']);
+            });
         });
     });
 });

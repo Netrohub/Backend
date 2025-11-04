@@ -13,9 +13,16 @@ use App\Helpers\AuditHelper;
 
 class WalletController extends Controller
 {
+    // Withdrawal limits for security and fraud prevention
+    const MIN_WITHDRAWAL_AMOUNT = 10; // $10 minimum
+    const MAX_SINGLE_WITHDRAWAL = 2000; // $2,000 per transaction
+    const DAILY_WITHDRAWAL_LIMIT = 5000; // $5,000 per day
+    const HOURLY_WITHDRAWAL_LIMIT = 3; // 3 withdrawals per hour
+
     public function __construct(
         private TapPaymentService $tapService
     ) {}
+    
     public function index(Request $request)
     {
         $wallet = Wallet::firstOrCreate(
@@ -30,12 +37,97 @@ class WalletController extends Controller
         return response()->json($wallet);
     }
 
+    /**
+     * Get withdrawal history for user
+     */
+    public function withdrawalHistory(Request $request)
+    {
+        $withdrawals = WithdrawalRequest::where('user_id', $request->user()->id)
+            ->orderBy('created_at', 'desc')
+            ->limit(50)
+            ->get()
+            ->map(function ($withdrawal) {
+                return [
+                    'id' => $withdrawal->id,
+                    'amount' => $withdrawal->amount,
+                    'bank_account' => $this->maskBankAccount($withdrawal->bank_account),
+                    'bank_account_full' => $withdrawal->bank_account, // For display in details
+                    'status' => $withdrawal->status,
+                    'tap_transfer_id' => $withdrawal->tap_transfer_id,
+                    'failure_reason' => $withdrawal->failure_reason,
+                    'created_at' => $withdrawal->created_at->toIso8601String(),
+                    'processed_at' => $withdrawal->processed_at?->toIso8601String(),
+                ];
+            });
+
+        return response()->json($withdrawals);
+    }
+
+    /**
+     * Mask bank account for security (show first 4 and last 4 digits)
+     */
+    private function maskBankAccount($bankAccount): string
+    {
+        if (strlen($bankAccount) <= 8) {
+            return $bankAccount;
+        }
+        
+        return substr($bankAccount, 0, 6) . str_repeat('*', strlen($bankAccount) - 10) . substr($bankAccount, -4);
+    }
+
     public function withdraw(Request $request)
     {
         $validated = $request->validate([
-            'amount' => 'required|numeric|min:0.01',
-            'bank_account' => 'required|string',
+            'amount' => [
+                'required',
+                'numeric',
+                'min:' . self::MIN_WITHDRAWAL_AMOUNT,
+                'max:' . self::MAX_SINGLE_WITHDRAWAL,
+            ],
+            'bank_account' => [
+                'required',
+                'string',
+                'regex:/^SA\d{22}$/', // Saudi IBAN format
+            ],
+        ], [
+            'amount.min' => 'الحد الأدنى للسحب هو $' . self::MIN_WITHDRAWAL_AMOUNT,
+            'amount.max' => 'الحد الأقصى للسحب هو $' . self::MAX_SINGLE_WITHDRAWAL . ' لكل عملية',
+            'bank_account.regex' => 'رقم الحساب البنكي يجب أن يكون بصيغة IBAN السعودي (SA + 22 رقم)',
         ]);
+
+        // Check hourly withdrawal limit (additional protection beyond rate limiting)
+        $recentWithdrawals = WithdrawalRequest::where('user_id', $request->user()->id)
+            ->where('created_at', '>', now()->subHour())
+            ->count();
+
+        if ($recentWithdrawals >= self::HOURLY_WITHDRAWAL_LIMIT) {
+            return response()->json([
+                'message' => 'لقد تجاوزت الحد الأقصى من طلبات السحب. يرجى المحاولة بعد ساعة.',
+                'error_code' => 'WITHDRAWAL_HOURLY_LIMIT_EXCEEDED',
+                'limit' => self::HOURLY_WITHDRAWAL_LIMIT,
+            ], 429);
+        }
+
+        // Check daily withdrawal limit
+        $todayWithdrawals = WithdrawalRequest::where('user_id', $request->user()->id)
+            ->whereDate('created_at', today())
+            ->whereIn('status', [
+                WithdrawalRequest::STATUS_PENDING,
+                WithdrawalRequest::STATUS_PROCESSING,
+                WithdrawalRequest::STATUS_COMPLETED
+            ])
+            ->sum('amount');
+
+        if ($todayWithdrawals + $validated['amount'] > self::DAILY_WITHDRAWAL_LIMIT) {
+            $remaining = max(0, self::DAILY_WITHDRAWAL_LIMIT - $todayWithdrawals);
+            return response()->json([
+                'message' => 'لقد تجاوزت الحد الأقصى اليومي للسحب ($' . self::DAILY_WITHDRAWAL_LIMIT . ')',
+                'error_code' => 'DAILY_WITHDRAWAL_LIMIT_EXCEEDED',
+                'daily_limit' => self::DAILY_WITHDRAWAL_LIMIT,
+                'withdrawn_today' => (float) $todayWithdrawals,
+                'remaining' => (float) $remaining,
+            ], 400);
+        }
 
         $wallet = Wallet::firstOrCreate(
             ['user_id' => $request->user()->id],

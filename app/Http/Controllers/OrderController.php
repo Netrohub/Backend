@@ -174,4 +174,135 @@ class OrderController extends Controller
 
         return response()->json($order->load(['listing', 'buyer', 'seller']));
     }
+
+    /**
+     * Confirm order receipt (buyer only)
+     * Changes status from escrow_hold to completed and releases funds to seller
+     */
+    public function confirm(Request $request, $id)
+    {
+        $order = Order::findOrFail($id);
+        $user = $request->user();
+
+        // Only buyer can confirm
+        if ($order->buyer_id !== $user->id) {
+            return response()->json([
+                'message' => 'فقط المشتري يمكنه تأكيد الطلب',
+                'error_code' => 'ONLY_BUYER_CAN_CONFIRM',
+            ], 403);
+        }
+
+        // Must be in escrow_hold status
+        if ($order->status !== 'escrow_hold') {
+            return response()->json([
+                'message' => 'لا يمكن تأكيد هذا الطلب في حالته الحالية',
+                'error_code' => 'INVALID_ORDER_STATUS',
+            ], 400);
+        }
+
+        // Release funds to seller
+        DB::transaction(function () use ($order, $user) {
+            $sellerWallet = Wallet::lockForUpdate()
+                ->firstOrCreate(
+                    ['user_id' => $order->seller_id],
+                    ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                );
+
+            // Transfer from escrow (on_hold) to seller's available balance
+            $sellerWallet->available_balance += $order->amount;
+            $sellerWallet->save();
+
+            // Update order status
+            $oldStatus = $order->status;
+            $order->status = 'completed';
+            $order->confirmed_at = now();
+            $order->save();
+
+            // Audit log
+            AuditHelper::log(
+                'order.confirmed',
+                Order::class,
+                $order->id,
+                ['status' => $oldStatus],
+                ['status' => 'completed', 'confirmed_by' => $user->id],
+                request()
+            );
+
+            // Notify seller
+            $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'completed'));
+        });
+
+        return response()->json([
+            'message' => 'تم تأكيد الطلب بنجاح',
+            'order' => $order->fresh(['listing', 'buyer', 'seller']),
+        ]);
+    }
+
+    /**
+     * Cancel order (buyer or seller, with refund if in escrow)
+     */
+    public function cancel(Request $request, $id)
+    {
+        $order = Order::findOrFail($id);
+        $user = $request->user();
+
+        // Only buyer or seller can cancel
+        if ($order->buyer_id !== $user->id && $order->seller_id !== $user->id) {
+            return response()->json([
+                'message' => MessageHelper::ERROR_UNAUTHORIZED,
+                'error_code' => 'UNAUTHORIZED',
+            ], 403);
+        }
+
+        // Cannot cancel if already completed
+        if ($order->status === 'completed') {
+            return response()->json([
+                'message' => 'لا يمكن إلغاء طلب مكتمل',
+                'error_code' => 'CANNOT_CANCEL_COMPLETED',
+            ], 400);
+        }
+
+        // Handle refund if in escrow
+        if ($order->status === 'escrow_hold') {
+            DB::transaction(function () use ($order) {
+                $buyerWallet = Wallet::lockForUpdate()
+                    ->firstOrCreate(
+                        ['user_id' => $order->buyer_id],
+                        ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                    );
+                
+                // Validate balance before refund
+                if ($buyerWallet->on_hold_balance < $order->amount) {
+                    throw new \Exception(MessageHelper::ORDER_INSUFFICIENT_ESCROW);
+                }
+                
+                $buyerWallet->available_balance += $order->amount;
+                $buyerWallet->on_hold_balance -= $order->amount;
+                $buyerWallet->save();
+            });
+        }
+
+        $oldStatus = $order->status;
+        $order->status = 'cancelled';
+        $order->save();
+        
+        // Audit log
+        AuditHelper::log(
+            'order.cancelled',
+            Order::class,
+            $order->id,
+            ['status' => $oldStatus],
+            ['status' => 'cancelled', 'cancelled_by' => $user->id],
+            $request
+        );
+        
+        // Notify both parties
+        $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'cancelled'));
+        $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'cancelled'));
+
+        return response()->json([
+            'message' => 'تم إلغاء الطلب بنجاح',
+            'order' => $order->fresh(['listing', 'buyer', 'seller']),
+        ]);
+    }
 }

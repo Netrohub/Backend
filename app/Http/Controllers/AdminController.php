@@ -19,10 +19,20 @@ class AdminController extends Controller
 
     public function users(Request $request)
     {
+        $query = User::with(['wallet', 'kycVerification'])
+            ->withCount(['listings', 'ordersAsBuyer', 'ordersAsSeller']);
+
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', '%' . $search . '%')
+                  ->orWhere('email', 'like', '%' . $search . '%');
+            });
+        }
+
         $users = PaginationHelper::paginate(
-            User::with(['wallet', 'kycVerification'])
-                ->withCount(['listings', 'ordersAsBuyer', 'ordersAsSeller'])
-                ->orderBy('created_at', 'desc'),
+            $query->orderBy('created_at', 'desc'),
             $request
         );
 
@@ -97,10 +107,20 @@ class AdminController extends Controller
 
     public function listings(Request $request)
     {
+        $query = Listing::with('user')
+            ->withCount('orders');
+
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('title', 'like', '%' . $search . '%')
+                  ->orWhere('description', 'like', '%' . $search . '%');
+            });
+        }
+
         $listings = PaginationHelper::paginate(
-            Listing::with('user')
-                ->withCount('orders')
-                ->orderBy('created_at', 'desc'),
+            $query->orderBy('created_at', 'desc'),
             $request
         );
 
@@ -109,9 +129,24 @@ class AdminController extends Controller
 
     public function orders(Request $request)
     {
+        $query = Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment']);
+
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('id', 'like', '%' . $search . '%')
+                  ->orWhereHas('buyer', function($q2) use ($search) {
+                      $q2->where('name', 'like', '%' . $search . '%');
+                  })
+                  ->orWhereHas('seller', function($q2) use ($search) {
+                      $q2->where('name', 'like', '%' . $search . '%');
+                  });
+            });
+        }
+
         $orders = PaginationHelper::paginate(
-            Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
-                ->orderBy('created_at', 'desc'),
+            $query->orderBy('created_at', 'desc'),
             $request
         );
 
