@@ -108,9 +108,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/listings/{id}/credentials', [ListingController::class, 'getCredentials'])->middleware('throttle:30,1');
 
         // Orders (require email verification for creation)
+        // Increased limits: 30 orders per hour (reasonable for legitimate users)
         Route::middleware('verified')->group(function () {
-            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:10,60');
-            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle:10,60');
+            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:30,60');
+            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle:30,60');
         });
         
         Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:60,1');
