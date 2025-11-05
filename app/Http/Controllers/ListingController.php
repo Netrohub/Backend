@@ -289,7 +289,20 @@ class ListingController extends Controller
             $listing->account_password = $validated['account_password'];
         }
 
-        $listing->save();
+        try {
+            $listing->save();
+        } catch (\Exception $e) {
+            Log::error('Failed to update listing: ' . $e->getMessage(), [
+                'listing_id' => $listing->id,
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'message' => 'فشل تحديث الإعلان. يرجى المحاولة مرة أخرى.',
+                'error_code' => 'UPDATE_FAILED',
+            ], 500);
+        }
 
         // Log update
         AuditHelper::log('listing_updated', 'listings', $listing->id, $request->user()->id, [

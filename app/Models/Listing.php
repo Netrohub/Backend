@@ -22,6 +22,11 @@ class Listing extends Model
         'account_metadata',
     ];
 
+    protected $hidden = [
+        'account_email_encrypted',
+        'account_password_encrypted',
+    ];
+
     protected function casts(): array
     {
         return [

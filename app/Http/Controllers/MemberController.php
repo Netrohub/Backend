@@ -18,7 +18,10 @@ class MemberController extends Controller
         if ($page === 1) {
             $members = Cache::remember($cacheKey, 600, function () use ($request) {
                 return PaginationHelper::paginate(
-                    User::where('is_verified', true)
+                    User::where(function($query) {
+                            $query->where('is_verified', true)
+                                  ->orWhereNotNull('email_verified_at');
+                        })
                         ->where('role', 'user')
                         ->select('id', 'name', 'avatar', 'bio', 'created_at')
                         ->orderBy('created_at', 'desc'),
@@ -27,7 +30,10 @@ class MemberController extends Controller
             });
         } else {
             $members = PaginationHelper::paginate(
-                User::where('is_verified', true)
+                User::where(function($query) {
+                        $query->where('is_verified', true)
+                              ->orWhereNotNull('email_verified_at');
+                    })
                     ->where('role', 'user')
                     ->select('id', 'name', 'avatar', 'bio', 'created_at')
                     ->orderBy('created_at', 'desc'),
@@ -44,7 +50,10 @@ class MemberController extends Controller
         $cacheKey = 'member_profile_' . $id;
         
         $member = Cache::remember($cacheKey, 900, function () use ($id) {
-            return User::where('is_verified', true)
+            return User::where(function($query) {
+                    $query->where('is_verified', true)
+                          ->orWhereNotNull('email_verified_at');
+                })
                 ->where('id', $id)
                 ->select('id', 'name', 'avatar', 'bio', 'created_at')
                 ->withCount(['listings', 'ordersAsSeller', 'ordersAsBuyer'])
