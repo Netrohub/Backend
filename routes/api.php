@@ -16,6 +16,7 @@ use App\Http\Controllers\WalletController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\SuggestionController;
+use App\Http\Controllers\SiteSettingController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -45,6 +46,9 @@ Route::prefix('v1')->group(function () {
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/members', [MemberController::class, 'index']);
     Route::get('/members/{id}', [MemberController::class, 'show']);
+    
+    // Site Settings (public read for terms & privacy)
+    Route::get('/site-settings/{key}', [SiteSettingController::class, 'show']);
     
     // Listings (public - anyone can browse, but creating/updating requires auth)
     Route::get('/listings', [ListingController::class, 'index'])->middleware('throttle:60,1');
@@ -203,6 +207,10 @@ Route::prefix('v1')->group(function () {
         Route::prefix('admin')->middleware(['admin', 'throttle:100,1'])->group(function () {
             // Dashboard (read-only, can be polled)
             Route::get('/stats', [AdminController::class, 'stats']);
+            
+            // Site Settings Management
+            Route::get('/site-settings', [SiteSettingController::class, 'index']);
+            Route::put('/site-settings/{key}', [SiteSettingController::class, 'update']);
             Route::get('/activity', [AdminController::class, 'activity']);
             
             // Read operations (generous limits for browsing)
