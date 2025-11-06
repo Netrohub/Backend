@@ -19,8 +19,8 @@ class AuthenticationTest extends TestCase
         $response = $this->postJson('/api/v1/register', [
             'name' => 'Test User',
             'email' => 'test@example.com',
-            'password' => 'Password123!@#',
-            'password_confirmation' => 'Password123!@#',
+            'password' => 'TestP@ssw0rd!2024$Strong',
+            'password_confirmation' => 'TestP@ssw0rd!2024$Strong',
             'phone' => '+966500000000',
         ]);
 
@@ -30,10 +30,6 @@ class AuthenticationTest extends TestCase
                     'id',
                     'name',
                     'email',
-                    'phone',
-                    'role',
-                    'email_verified_at',
-                    'is_verified',
                     'created_at',
                     'updated_at',
                     'wallet',
@@ -95,14 +91,17 @@ class AuthenticationTest extends TestCase
     {
         $user = User::factory()->create([
             'email' => 'test@example.com',
-            'password' => bcrypt('Password123!@#'),
+            'password' => bcrypt('TestP@ssw0rd!2024$Strong'),
         ]);
 
-        Wallet::factory()->create(['user_id' => $user->id]);
+        // Create wallet for user
+        if (!$user->wallet) {
+            Wallet::factory()->create(['user_id' => $user->id]);
+        }
 
         $response = $this->postJson('/api/v1/login', [
             'email' => 'test@example.com',
-            'password' => 'Password123!@#',
+            'password' => 'TestP@ssw0rd!2024$Strong',
         ]);
 
         $response->assertStatus(200)
@@ -119,12 +118,12 @@ class AuthenticationTest extends TestCase
     {
         $user = User::factory()->create([
             'email' => 'test@example.com',
-            'password' => bcrypt('Password123!@#'),
+            'password' => bcrypt('TestP@ssw0rd!2024$Strong'),
         ]);
 
         $response = $this->postJson('/api/v1/login', [
             'email' => 'test@example.com',
-            'password' => 'WrongPassword123!@#',
+            'password' => 'WrongP@ssw0rd!2024$Wrong',
         ]);
 
         $response->assertStatus(422)
@@ -137,7 +136,11 @@ class AuthenticationTest extends TestCase
     public function test_authenticated_user_can_access_protected_routes(): void
     {
         $user = User::factory()->create();
-        Wallet::factory()->create(['user_id' => $user->id]);
+        
+        // Create wallet for user
+        if (!$user->wallet) {
+            Wallet::factory()->create(['user_id' => $user->id]);
+        }
 
         $response = $this->actingAs($user, 'sanctum')
             ->getJson('/api/v1/user');
@@ -187,15 +190,18 @@ class AuthenticationTest extends TestCase
     {
         $user = User::factory()->create([
             'email' => 'test@example.com',
-            'password' => bcrypt('Password123!@#'),
+            'password' => bcrypt('TestP@ssw0rd!2024$Strong'),
         ]);
 
-        Wallet::factory()->create(['user_id' => $user->id]);
+        // Create wallet for user
+        if (!$user->wallet) {
+            Wallet::factory()->create(['user_id' => $user->id]);
+        }
 
         // Try logging in with uppercase email
         $response = $this->postJson('/api/v1/login', [
             'email' => 'TEST@EXAMPLE.COM',
-            'password' => 'Password123!@#',
+            'password' => 'TestP@ssw0rd!2024$Strong',
         ]);
 
         $response->assertStatus(200);

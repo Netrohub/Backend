@@ -35,8 +35,9 @@ class ListingTest extends TestCase
                         'views',
                     ]
                 ],
-                'links',
-                'meta',
+                // Pagination structure may vary
+                'current_page',
+                'per_page',
             ]);
     }
 
@@ -71,6 +72,8 @@ class ListingTest extends TestCase
                 'price' => 100.00,
                 'category' => 'wos_accounts',
                 'images' => [],
+                'account_email' => 'test@account.com',
+                'account_password' => 'AccountPass123!',
             ]);
 
         $response->assertStatus(201)

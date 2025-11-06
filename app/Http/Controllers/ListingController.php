@@ -191,11 +191,18 @@ class ListingController extends Controller
         $listing->save();
 
         // Log listing creation
-        AuditHelper::log('listing_created', 'listings', $listing->id, $user->id, [
-            'title' => $listing->title,
-            'price' => $listing->price,
-            'category' => $listing->category,
-        ]);
+        AuditHelper::log(
+            'listing_created',
+            'listings',
+            $listing->id,
+            null, // oldValues
+            [
+                'title' => $listing->title,
+                'price' => $listing->price,
+                'category' => $listing->category,
+            ], // newValues
+            $request
+        );
 
         // Invalidate listings cache when new listing is created
         Cache::forget('listings_' . md5($category . ''));
@@ -305,9 +312,14 @@ class ListingController extends Controller
         }
 
         // Log update
-        AuditHelper::log('listing_updated', 'listings', $listing->id, $request->user()->id, [
-            'updated_fields' => array_keys($validated),
-        ]);
+        AuditHelper::log(
+            'listing_updated',
+            'listings',
+            $listing->id,
+            null, // oldValues
+            ['updated_fields' => array_keys($validated)], // newValues
+            $request
+        );
 
         // Invalidate cache for both old and new categories if category changed
         if (isset($validated['category']) && $validated['category'] !== $oldCategory) {
@@ -343,9 +355,14 @@ class ListingController extends Controller
         $category = $listing->category;
         
         // Log deletion
-        AuditHelper::log('listing_deleted', 'listings', $listing->id, $request->user()->id, [
-            'title' => $listing->title,
-        ]);
+        AuditHelper::log(
+            'listing_deleted',
+            'listings',
+            $listing->id,
+            null, // oldValues
+            ['title' => $listing->title], // newValues
+            $request
+        );
 
         $listing->delete();
 
