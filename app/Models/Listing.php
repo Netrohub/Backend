@@ -20,6 +20,11 @@ class Listing extends Model
         'status',
         'views',
         'account_metadata',
+        'verification_code',
+        'verification_screenshot',
+        'verification_approved',
+        'verified_at',
+        'verified_by',
     ];
 
     protected $hidden = [
@@ -34,6 +39,8 @@ class Listing extends Model
             'price' => 'decimal:2',
             'views' => 'integer',
             'account_metadata' => 'array',
+            'verification_approved' => 'boolean',
+            'verified_at' => 'datetime',
         ];
     }
 
