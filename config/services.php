@@ -57,4 +57,11 @@ return [
         'images_base' => env('CLOUDFLARE_IMAGES_BASE', 'https://imagedelivery.net'),
     ],
 
+    'tiktok' => [
+        'client_key' => env('TIKTOK_CLIENT_KEY'),
+        'client_secret' => env('TIKTOK_CLIENT_SECRET'),
+        'base_url' => env('TIKTOK_BASE_URL', 'https://open-api.tiktok.com'),
+        'redirect_uri' => env('APP_URL') . '/api/v1/tiktok/callback',
+    ],
+
 ];

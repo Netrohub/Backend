@@ -71,6 +71,9 @@ Route::prefix('v1')->group(function () {
         Route::post('/webhook/tap/transfer', [WebhookController::class, 'tapTransfer']);
     });
 
+    // TikTok OAuth Callback (no auth required - receives code from TikTok)
+    Route::get('/tiktok/callback', [\App\Http\Controllers\TikTokController::class, 'callback']);
+
     // Protected routes
     Route::middleware('auth:sanctum')->group(function () {
         // Auth
@@ -83,6 +86,14 @@ Route::prefix('v1')->group(function () {
         // Password change with rate limiting (5 attempts per 60 minutes)
         Route::middleware('throttle:5,60')->group(function () {
             Route::put('/user/password', [AuthController::class, 'updatePassword']);
+        });
+        
+        // TikTok OAuth and Verification
+        Route::prefix('tiktok')->group(function () {
+            Route::get('/authorize', [\App\Http\Controllers\TikTokController::class, 'authorize']);
+            Route::get('/profile', [\App\Http\Controllers\TikTokController::class, 'getProfile']);
+            Route::post('/verify-bio', [\App\Http\Controllers\TikTokController::class, 'verifyBio'])->middleware('throttle:10,1');
+            Route::post('/disconnect', [\App\Http\Controllers\TikTokController::class, 'disconnect']);
         });
         
         // Email verification (strict rate limit to prevent email spam)
