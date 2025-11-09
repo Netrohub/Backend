@@ -186,12 +186,13 @@ Route::prefix('v1')->group(function () {
         Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:10,60'); // Diagnostic
         
         // Notifications with rate limiting to prevent spam
-        Route::middleware('throttle:60,1')->group(function () {
+        // Increased to 240/min (4 req/sec) to support bell polling
+        Route::middleware('throttle:240,1')->group(function () {
             Route::get('/notifications', [NotificationController::class, 'index']);
             Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
         });
         
-        Route::middleware('throttle:30,1')->group(function () {
+        Route::middleware('throttle:120,1')->group(function () {
             Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
             Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
         });
