@@ -77,14 +77,6 @@ return new class extends Migration
 </li>
 </ol>
 
-<h2>شروط الاسترداد الجزئي</h2>
-<p>في بعض الحالات، قد يتم استرداد جزئي للمبلغ:</p>
-<ul>
-<li>اختلافات طفيفة في الوصف لا تؤثر على جوهر المنتج</li>
-<li>تأخير في تسليم بيانات الحساب (أكثر من 24 ساعة)</li>
-<li>مشاكل فنية بسيطة يمكن حلها</li>
-</ul>
-
 <h2>الحالات التي لا يحق فيها الاسترداد</h2>
 <p>لا يمكن استرداد المبلغ في الحالات التالية:</p>
 <ol>
@@ -116,7 +108,7 @@ return new class extends Migration
 <li>قدم وصفًا تفصيليًا للمشكلة</li>
 <li>أرفق أدلة واضحة (لقطات شاشة، فيديو، سجلات، إلخ)</li>
 <li>انتظر مراجعة فريق الدعم للنزاع (24-48 ساعة)</li>
-<li>سيقرر الفريق الحل: استرداد كامل، جزئي، أو رفض بناءً على الأدلة</li>
+<li>سيقرر الفريق الحل: <strong>استرداد كامل أو رفض</strong> بناءً على الأدلة المقدمة</li>
 </ol>
 <p><strong>بعد انتهاء 12 ساعة:</strong> لا يمكن فتح نزاع ويصبح البيع نهائياً.</p>
 
@@ -152,7 +144,7 @@ return new class extends Migration
 <li>المشتري يفتح نزاع مع الأدلة</li>
 <li>الإدارة تراجع الطلب والأدلة</li>
 <li>يتم التواصل مع الطرفين إن لزم الأمر</li>
-<li>قرار نهائي: استرداد كامل، جزئي، أو إغلاق النزاع</li>
+<li>قرار نهائي: <strong>استرداد كامل أو إغلاق النزاع (رفض)</strong></li>
 <li>تنفيذ القرار فوراً</li>
 </ol>
 
@@ -219,14 +211,6 @@ HTML;
 </li>
 </ol>
 
-<h2>Partial Refund Eligibility</h2>
-<p>In some cases, a partial refund may be issued:</p>
-<ul>
-<li>Minor discrepancies in description that don't affect core product</li>
-<li>Delayed delivery of account credentials (more than 24 hours)</li>
-<li>Minor technical issues that can be resolved</li>
-</ul>
-
 <h2>Non-Refundable Cases</h2>
 <p>Refunds will NOT be issued in the following cases:</p>
 <ol>
@@ -258,7 +242,7 @@ HTML;
 <li>Provide a detailed description of the issue</li>
 <li>Attach clear evidence (screenshots, videos, logs, etc.)</li>
 <li>Wait for support team to review the dispute (24-48 hours)</li>
-<li>Team will decide resolution: full refund, partial refund, or rejection based on evidence</li>
+<li>Team will decide resolution: <strong>full refund or rejection</strong> based on submitted evidence</li>
 </ol>
 <p><strong>After 12 hours expire:</strong> Disputes cannot be opened and the sale is final.</p>
 
@@ -294,7 +278,7 @@ HTML;
 <li>Buyer opens dispute with evidence</li>
 <li>Admin reviews order and evidence</li>
 <li>Communication with both parties if needed</li>
-<li>Final decision: full refund, partial refund, or dispute closure</li>
+<li>Final decision: <strong>full refund or dispute closure (rejection)</strong></li>
 <li>Decision executed immediately</li>
 </ol>
 
