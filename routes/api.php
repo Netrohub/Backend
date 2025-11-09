@@ -125,12 +125,12 @@ Route::prefix('v1')->group(function () {
         // Orders (require email verification for creation)
         // Increased limits: 30 orders per hour (reasonable for legitimate users)
         Route::middleware('verified')->group(function () {
-            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:30,60');
-            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle:30,60');
+            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:60,60'); // Increased to 60/hour
+            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle:60,60'); // Increased to 60/hour
         });
         
-        Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:60,1');
-        Route::get('/orders/{id}', [OrderController::class, 'show'])->middleware('throttle:60,1');
+        Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min
+        Route::get('/orders/{id}', [OrderController::class, 'show'])->middleware('throttle:120,1'); // Increased to 120/min
         Route::put('/orders/{id}', [OrderController::class, 'update'])->middleware('throttle:20,60');
         
         // Order actions (confirm, cancel)
@@ -180,7 +180,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // KYC (strict rate limiting to prevent Persona API cost abuse)
-        Route::get('/kyc', [KycController::class, 'index'])->middleware('throttle:30,1');
+        Route::get('/kyc', [KycController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min for better UX
         Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:5,60'); // 5 per hour (Persona costs money!)
         Route::post('/kyc/sync', [KycController::class, 'sync'])->middleware('throttle:10,60'); // Manual sync
         Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:10,60'); // Diagnostic
