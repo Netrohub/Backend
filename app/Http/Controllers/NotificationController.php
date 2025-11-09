@@ -226,21 +226,21 @@ class NotificationController extends Controller
     public function adminHistory(Request $request)
     {
         // Get recent broadcast notifications (identified by duplicate title/message across users)
-        $notifications = DB::select("
-            SELECT 
-                title, 
-                message, 
-                type, 
-                icon, 
-                color,
-                COUNT(DISTINCT user_id) as recipients_count,
-                MIN(created_at) as sent_at,
-                MAX(read) as any_read
-            FROM user_notifications
-            GROUP BY title, message, type, icon, color
-            ORDER BY MIN(created_at) DESC
-            LIMIT 50
-        ");
+        $notifications = DB::table('user_notifications')
+            ->select([
+                'title',
+                'message',
+                'type',
+                'icon',
+                'color',
+                DB::raw('COUNT(DISTINCT user_id) as recipients_count'),
+                DB::raw('MIN(created_at) as sent_at'),
+                DB::raw('MAX(CASE WHEN read = true THEN 1 ELSE 0 END) as any_read')
+            ])
+            ->groupBy('title', 'message', 'type', 'icon', 'color')
+            ->orderByRaw('MIN(created_at) DESC')
+            ->limit(50)
+            ->get();
 
         return response()->json($notifications);
     }
