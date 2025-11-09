@@ -107,15 +107,18 @@ return new class extends Migration
 <li><strong>التواصل خارج المنصة:</strong> أي تعامل خارج نظام الضمان يفقدك الحماية</li>
 </ol>
 
-<h2>كيفية طلب الاسترداد</h2>
-<p>لطلب استرداد المبلغ، يجب اتباع الخطوات التالية:</p>
+<h2>كيفية طلب الاسترداد (عن طريق النزاع)</h2>
+<p><strong>⚠️ مهم: جميع طلبات الاسترداد تتم عبر نظام النزاعات فقط</strong></p>
+<p>لا يوجد زر "طلب استرداد" مباشر. لطلب استرداد المبلغ، يجب فتح نزاع:</p>
 <ol>
-<li>قم بفتح نزاع من صفحة الطلب خلال فترة الضمان (12 ساعة)</li>
-<li>اختر السبب المناسب من القائمة</li>
+<li><strong>افتح نزاع</strong> من صفحة الطلب الخاص بك خلال 12 ساعة</li>
+<li>اختر السبب المناسب من القائمة (حساب لا يطابق الوصف، بيانات خاطئة، إلخ)</li>
 <li>قدم وصفًا تفصيليًا للمشكلة</li>
-<li>أرفق أدلة (لقطات شاشة، فيديو، إلخ)</li>
-<li>انتظر رد فريق الدعم خلال 24-48 ساعة</li>
+<li>أرفق أدلة واضحة (لقطات شاشة، فيديو، سجلات، إلخ)</li>
+<li>انتظر مراجعة فريق الدعم للنزاع (24-48 ساعة)</li>
+<li>سيقرر الفريق الحل: استرداد كامل، جزئي، أو رفض بناءً على الأدلة</li>
 </ol>
+<p><strong>بعد انتهاء 12 ساعة:</strong> لا يمكن فتح نزاع ويصبح البيع نهائياً.</p>
 
 <h2>مدة معالجة الاسترداد</h2>
 <ul>
@@ -135,13 +138,23 @@ return new class extends Migration
 <p>هذه الخدمات يتم تفعيلها فورًا ولا يمكن إلغاؤها أو استردادها.</p>
 
 <h2>حماية حقوقك</h2>
-<p>نظام الضمان الخاص بنا يضمن:</p>
+<p>نظام الضمان والنزاعات يضمن:</p>
 <ul>
 <li>حماية كاملة للمشتري خلال فترة الضمان (12 ساعة)</li>
-<li>فريق دعم متخصص لحل النزاعات بعدالة</li>
-<li>مراجعة شاملة لكل طلب استرداد</li>
+<li>إمكانية فتح نزاع بسهولة من صفحة الطلب</li>
+<li>فريق دعم متخصص لمراجعة كل نزاع بحيادية وعدالة</li>
+<li>تقييم شامل للأدلة المقدمة من الطرفين</li>
 <li>قرارات سريعة ومنصفة (24-48 ساعة)</li>
+<li>استرداد فوري للمبلغ في حال ثبوت المخالفة</li>
 </ul>
+<p><strong>آلية عمل النزاع:</strong></p>
+<ol>
+<li>المشتري يفتح نزاع مع الأدلة</li>
+<li>الإدارة تراجع الطلب والأدلة</li>
+<li>يتم التواصل مع الطرفين إن لزم الأمر</li>
+<li>قرار نهائي: استرداد كامل، جزئي، أو إغلاق النزاع</li>
+<li>تنفيذ القرار فوراً</li>
+</ol>
 
 <h2>التواصل</h2>
 <p>لأي استفسارات حول سياسة الاسترداد:</p>
@@ -236,15 +249,18 @@ HTML;
 <li><strong>Off-Platform Communication:</strong> Any deal outside escrow system voids protection</li>
 </ol>
 
-<h2>How to Request a Refund</h2>
-<p>To request a refund, follow these steps:</p>
+<h2>How to Request a Refund (Through Dispute System)</h2>
+<p><strong>⚠️ Important: All refund requests are processed through our dispute system only</strong></p>
+<p>There is no direct "Request Refund" button. To request a refund, you must open a dispute:</p>
 <ol>
-<li>Open a dispute from the order page within the escrow period (12 hours)</li>
-<li>Select the appropriate reason from the list</li>
+<li><strong>Open a Dispute</strong> from your order page within 12 hours</li>
+<li>Select the appropriate reason (account doesn't match, wrong credentials, etc.)</li>
 <li>Provide a detailed description of the issue</li>
-<li>Attach evidence (screenshots, videos, etc.)</li>
-<li>Wait for support team response within 24-48 hours</li>
+<li>Attach clear evidence (screenshots, videos, logs, etc.)</li>
+<li>Wait for support team to review the dispute (24-48 hours)</li>
+<li>Team will decide resolution: full refund, partial refund, or rejection based on evidence</li>
 </ol>
+<p><strong>After 12 hours expire:</strong> Disputes cannot be opened and the sale is final.</p>
 
 <h2>Refund Processing Time</h2>
 <ul>
@@ -264,13 +280,23 @@ HTML;
 <p>These services are activated immediately and cannot be canceled or refunded.</p>
 
 <h2>Your Protection</h2>
-<p>Our escrow system guarantees:</p>
+<p>Our escrow and dispute system guarantees:</p>
 <ul>
 <li>Full buyer protection during 12-hour escrow period</li>
-<li>Specialized support team for fair dispute resolution</li>
-<li>Comprehensive review of every refund request</li>
+<li>Easy dispute opening directly from order page</li>
+<li>Specialized support team for impartial dispute review</li>
+<li>Comprehensive evaluation of evidence from both parties</li>
 <li>Quick and fair decisions (24-48 hours)</li>
+<li>Immediate refund processing if violation is proven</li>
 </ul>
+<p><strong>Dispute Process:</strong></p>
+<ol>
+<li>Buyer opens dispute with evidence</li>
+<li>Admin reviews order and evidence</li>
+<li>Communication with both parties if needed</li>
+<li>Final decision: full refund, partial refund, or dispute closure</li>
+<li>Decision executed immediately</li>
+</ol>
 
 <h2>Contact Us</h2>
 <p>For any questions about our refund policy:</p>
