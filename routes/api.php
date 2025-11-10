@@ -112,9 +112,9 @@ Route::prefix('v1')->group(function () {
 
         // Listings (require KYC verification for creating/updating/deleting)
         Route::middleware('kycVerified')->group(function () {
-            Route::post('/listings', [ListingController::class, 'store'])->middleware('throttle:10,60');
-            Route::put('/listings/{id}', [ListingController::class, 'update'])->middleware('throttle:20,60');
-            Route::delete('/listings/{id}', [ListingController::class, 'destroy'])->middleware('throttle:10,60');
+            Route::post('/listings', [ListingController::class, 'store'])->middleware('throttle:60,60');
+            Route::put('/listings/{id}', [ListingController::class, 'update'])->middleware('throttle:120,60');
+            Route::delete('/listings/{id}', [ListingController::class, 'destroy'])->middleware('throttle:60,60');
         });
 
         // My listings (user's own listings only - data isolation)
