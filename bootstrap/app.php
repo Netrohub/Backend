@@ -12,6 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Disable Laravel's default CORS handling - we use our own custom HandleCors middleware
+        // This prevents conflicts between Laravel's CORS and our custom implementation
+        
         // CORS middleware must be registered explicitly for API routes
         // Note: EnsureFrontendRequestsAreStateful is removed because we're using Bearer tokens, not cookies
         // For Bearer token authentication, CSRF protection is not needed
