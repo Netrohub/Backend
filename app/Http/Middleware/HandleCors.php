@@ -18,6 +18,14 @@ class HandleCors
         $allowedOrigins = config('cors.allowed_origins', []);
         $origin = $request->headers->get('Origin');
 
+        // Log CORS request for debugging
+        \Illuminate\Support\Facades\Log::debug('CORS request', [
+            'method' => $request->getMethod(),
+            'origin' => $origin,
+            'path' => $request->path(),
+            'allowed_origins' => $allowedOrigins,
+        ]);
+
         // Handle preflight OPTIONS requests
         if ($request->getMethod() === 'OPTIONS') {
             $response = response('', 200);
@@ -36,9 +44,9 @@ class HandleCors
             $methodsString = is_array($allowedMethods) ? implode(', ', $allowedMethods) : '*';
             $response->headers->set('Access-Control-Allow-Methods', $methodsString);
             
-            // Set allowed headers
+            // Set allowed headers - include Content-Type explicitly for multipart/form-data
             $allowedHeaders = config('cors.allowed_headers', ['*']);
-            $headersString = is_array($allowedHeaders) ? implode(', ', $allowedHeaders) : '*';
+            $headersString = is_array($allowedHeaders) ? implode(', ', $allowedHeaders) : 'Content-Type, Authorization, X-Requested-With, Accept, Origin';
             $response->headers->set('Access-Control-Allow-Headers', $headersString);
             
             $response->headers->set('Access-Control-Max-Age', (string) config('cors.max_age', 0));
@@ -46,6 +54,12 @@ class HandleCors
             if (config('cors.supports_credentials', false)) {
                 $response->headers->set('Access-Control-Allow-Credentials', 'true');
             }
+            
+            \Illuminate\Support\Facades\Log::debug('CORS preflight response', [
+                'origin' => $response->headers->get('Access-Control-Allow-Origin'),
+                'methods' => $response->headers->get('Access-Control-Allow-Methods'),
+                'headers' => $response->headers->get('Access-Control-Allow-Headers'),
+            ]);
             
             return $response;
         }
@@ -69,12 +83,17 @@ class HandleCors
         
         // Set allowed headers
         $allowedHeaders = config('cors.allowed_headers', ['*']);
-        $headersString = is_array($allowedHeaders) ? implode(', ', $allowedHeaders) : '*';
+        $headersString = is_array($allowedHeaders) ? implode(', ', $allowedHeaders) : 'Content-Type, Authorization, X-Requested-With, Accept, Origin';
         $response->headers->set('Access-Control-Allow-Headers', $headersString);
         
         if (config('cors.supports_credentials', false)) {
             $response->headers->set('Access-Control-Allow-Credentials', 'true');
         }
+
+        \Illuminate\Support\Facades\Log::debug('CORS response', [
+            'status' => $response->getStatusCode(),
+            'origin' => $response->headers->get('Access-Control-Allow-Origin'),
+        ]);
 
         return $response;
     }
