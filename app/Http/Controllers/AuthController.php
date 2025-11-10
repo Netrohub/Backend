@@ -238,6 +238,113 @@ class AuthController extends Controller
     }
 
     /**
+     * Update user avatar
+     */
+    public function updateAvatar(Request $request)
+    {
+        $validated = $request->validate([
+            'avatar' => 'required|image|mimes:jpeg,jpg,png,gif,webp|max:2048', // Max 2MB
+        ]);
+
+        $user = $request->user();
+        $file = $request->file('avatar');
+
+        if (!$file || !$file->isValid()) {
+            return response()->json([
+                'message' => 'Invalid file uploaded',
+            ], 400);
+        }
+
+        $accountId = config('services.cloudflare.account_id');
+        $apiToken = config('services.cloudflare.api_token');
+        $accountHash = config('services.cloudflare.account_hash');
+
+        // Validate Cloudflare configuration
+        if (!$accountId || !$apiToken || !$accountHash) {
+            Log::error('Cloudflare Images configuration missing for avatar upload', [
+                'user_id' => $user->id,
+                'has_account_id' => !empty($accountId),
+                'has_api_token' => !empty($apiToken),
+                'has_account_hash' => !empty($accountHash),
+            ]);
+            
+            return response()->json([
+                'message' => 'Image service configuration error',
+                'error_code' => 'CLOUDFLARE_CONFIG_MISSING',
+            ], 500);
+        }
+
+        try {
+            Log::info('Uploading avatar to Cloudflare Images', [
+                'user_id' => $user->id,
+                'filename' => $file->getClientOriginalName(),
+                'size' => $file->getSize(),
+            ]);
+
+            // Upload to Cloudflare Images API
+            $response = \Illuminate\Support\Facades\Http::withToken($apiToken)
+                ->attach('file', fopen($file->getRealPath(), 'r'), $file->getClientOriginalName())
+                ->post("https://api.cloudflare.com/client/v4/accounts/{$accountId}/images/v1");
+
+            if (!$response->successful()) {
+                $errorBody = $response->json();
+                Log::error('Cloudflare Images upload failed', [
+                    'user_id' => $user->id,
+                    'status' => $response->status(),
+                    'error' => $errorBody,
+                ]);
+                
+                return response()->json([
+                    'message' => 'Failed to upload avatar',
+                    'error' => $errorBody['errors'][0]['message'] ?? 'Unknown error',
+                ], $response->status());
+            }
+
+            $responseData = $response->json();
+            
+            if (!isset($responseData['result']['id'])) {
+                Log::error('Cloudflare Images response missing image ID', [
+                    'user_id' => $user->id,
+                    'response' => $responseData,
+                ]);
+                
+                return response()->json([
+                    'message' => 'Invalid response from image service',
+                ], 500);
+            }
+
+            $imageId = $responseData['result']['id'];
+            $avatarUrl = "https://imagedelivery.net/{$accountHash}/{$imageId}/avatar";
+
+            // Update user avatar
+            $user->update(['avatar' => $avatarUrl]);
+
+            Log::info('Avatar updated successfully', [
+                'user_id' => $user->id,
+                'avatar_url' => $avatarUrl,
+            ]);
+
+            return response()->json([
+                'message' => 'Avatar updated successfully',
+                'avatar' => $avatarUrl,
+                'user' => $user->load(['wallet', 'kycVerification']),
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Avatar upload exception', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to upload avatar',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Update password
      */
     public function updatePassword(Request $request)

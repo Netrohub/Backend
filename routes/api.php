@@ -82,6 +82,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/user/stats', [AuthController::class, 'stats']);
         Route::get('/user/activity', [AuthController::class, 'activity']);
         Route::put('/user/profile', [AuthController::class, 'updateProfile']);
+        Route::post('/user/avatar', [AuthController::class, 'updateAvatar'])->middleware('throttle:10,60');
         
         // Password change with rate limiting (5 attempts per 60 minutes)
         Route::middleware('throttle:5,60')->group(function () {
