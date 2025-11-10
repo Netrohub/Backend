@@ -132,11 +132,11 @@ Route::prefix('v1')->group(function () {
         
         Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min
         Route::get('/orders/{id}', [OrderController::class, 'show'])->middleware('throttle:120,1'); // Increased to 120/min
-        Route::put('/orders/{id}', [OrderController::class, 'update'])->middleware('throttle:20,60');
+        Route::put('/orders/{id}', [OrderController::class, 'update'])->middleware('throttle:120,60');
         
         // Order actions (confirm, cancel)
-        Route::post('/orders/{id}/confirm', [OrderController::class, 'confirm'])->middleware('throttle:10,60');
-        Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->middleware('throttle:10,60');
+        Route::post('/orders/{id}/confirm', [OrderController::class, 'confirm'])->middleware('throttle:60,60');
+        Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->middleware('throttle:60,60');
 
         // Disputes with rate limiting to prevent spam and abuse
         Route::middleware('throttle:30,1')->group(function () {
@@ -144,7 +144,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/disputes/{dispute}', [DisputeController::class, 'show']);
         });
         
-        Route::middleware('throttle:5,60')->group(function () {
+        Route::middleware('throttle:30,60')->group(function () {
             Route::post('/disputes', [DisputeController::class, 'store']);
             Route::post('/disputes/{dispute}/cancel', [DisputeController::class, 'cancel']);
         });
@@ -175,16 +175,16 @@ Route::prefix('v1')->group(function () {
         Route::get('/wallet', [WalletController::class, 'index']);
         Route::get('/wallet/withdrawals', [WalletController::class, 'withdrawalHistory']);
         
-        // Withdrawal endpoint with STRICT rate limiting (3 attempts per hour)
-        Route::middleware(['verified', 'throttle:3,60'])->group(function () {
+        // Withdrawal endpoint with rate limiting (increased from 3 to 10 per hour)
+        Route::middleware(['verified', 'throttle:10,60'])->group(function () {
             Route::post('/wallet/withdraw', [WalletController::class, 'withdraw']);
         });
 
         // KYC (strict rate limiting to prevent Persona API cost abuse)
         Route::get('/kyc', [KycController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min for better UX
-        Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:5,60'); // 5 per hour (Persona costs money!)
-        Route::post('/kyc/sync', [KycController::class, 'sync'])->middleware('throttle:10,60'); // Manual sync
-        Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:10,60'); // Diagnostic
+        Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:20,60'); // Increased from 5 to 20
+        Route::post('/kyc/sync', [KycController::class, 'sync'])->middleware('throttle:30,60'); // Increased from 10 to 30
+        Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:60,60'); // Increased from 10 to 60
         
         // Notifications with rate limiting to prevent spam
         // Increased to 240/min (4 req/sec) to support bell polling
@@ -217,7 +217,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/platform/review/user', [SuggestionController::class, 'getUserPlatformReview']);
 
         // Admin routes (require admin role with rate limiting)
-        Route::prefix('admin')->middleware(['admin', 'throttle:100,1'])->group(function () {
+        Route::prefix('admin')->middleware(['admin', 'throttle:300,1'])->group(function () {
             // Dashboard (read-only, can be polled)
             Route::get('/stats', [AdminController::class, 'stats']);
             
@@ -234,8 +234,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/kyc', [AdminController::class, 'kyc']);
             Route::get('/settings', [SettingsController::class, 'index']);
             
-            // Write operations (stricter rate limiting for safety)
-            Route::middleware('throttle:30,1')->group(function () {
+            // Write operations (rate limiting for safety)
+            Route::middleware('throttle:120,1')->group(function () {
                 // User management
                 Route::put('/users/{id}', [AdminController::class, 'updateUser']);
                 Route::delete('/users/{id}', [AdminController::class, 'deleteUser']);
