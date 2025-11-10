@@ -157,16 +157,16 @@ Route::prefix('v1')->group(function () {
 
         // Reviews (protected - must be authenticated)
         // Rate limiting to prevent spam and abuse
-        Route::middleware('throttle:10,60')->group(function () {
+        Route::middleware('throttle:60,60')->group(function () {
             Route::post('/reviews', [ReviewController::class, 'store']);
             Route::put('/reviews/{id}', [ReviewController::class, 'update']);
         });
         
-        Route::middleware('throttle:30,60')->group(function () {
+        Route::middleware('throttle:120,60')->group(function () {
             Route::post('/reviews/{id}/helpful', [ReviewController::class, 'markHelpful']);
         });
         
-        Route::middleware('throttle:5,60')->group(function () {
+        Route::middleware('throttle:30,60')->group(function () {
             Route::post('/reviews/{id}/report', [ReviewController::class, 'report']);
             Route::delete('/reviews/{id}', [ReviewController::class, 'destroy']);
         });
@@ -193,12 +193,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
         });
         
-        Route::middleware('throttle:120,1')->group(function () {
+        Route::middleware('throttle:240,1')->group(function () {
             Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
             Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
         });
         
-        Route::middleware('throttle:10,1')->group(function () {
+        Route::middleware('throttle:60,1')->group(function () {
             Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
             Route::delete('/notifications/read/all', [NotificationController::class, 'deleteAllRead']);
         });
