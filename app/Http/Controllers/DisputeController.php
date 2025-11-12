@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\Wallet;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
@@ -141,17 +142,40 @@ class DisputeController extends Controller
 
         $validated = $request->validate([
             'status' => 'required|in:under_review,resolved,closed',
-            'resolution_notes' => 'required_if:status,resolved|string',
-            'resolution' => 'required_if:status,resolved|in:refund_buyer,release_to_seller',
+            'resolution' => 'nullable|string|in:buyer,seller,refund_buyer,release_to_seller',
+            'resolution_notes' => 'nullable|string',
+            'admin_notes' => 'nullable|string',
         ]);
 
         $oldStatus = $dispute->status;
         $dispute->status = $validated['status'];
         $dispute->resolved_by = $user->id;
         $dispute->resolved_at = now();
-        
-        if (isset($validated['resolution_notes'])) {
-            $dispute->resolution_notes = $validated['resolution_notes'];
+
+        $submittedResolution = $validated['resolution'] ?? null;
+        $normalizedResolution = $this->normalizeResolution($submittedResolution);
+        $resolutionNotes = $validated['resolution_notes'] ?? $validated['admin_notes'] ?? null;
+
+        if ($validated['status'] === 'resolved') {
+            if (!$normalizedResolution) {
+                throw ValidationException::withMessages([
+                    'resolution' => ['Resolution selection is required when resolving a dispute.'],
+                ]);
+            }
+
+            if (empty($resolutionNotes)) {
+                throw ValidationException::withMessages([
+                    'resolution_notes' => ['Resolution notes are required when resolving a dispute.'],
+                ]);
+            }
+
+            $dispute->resolution = $normalizedResolution;
+            $dispute->resolution_notes = $resolutionNotes;
+        } else {
+            $dispute->resolution = $normalizedResolution;
+            if ($resolutionNotes !== null) {
+                $dispute->resolution_notes = $resolutionNotes;
+            }
         }
 
         $dispute->save();
@@ -164,80 +188,84 @@ class DisputeController extends Controller
             ['status' => $oldStatus],
             [
                 'status' => $validated['status'],
-                'resolution' => $validated['resolution'] ?? null,
+                'resolution' => $normalizedResolution,
                 'resolved_by' => $user->id,
             ],
             $request
         );
 
-        // Send notifications when dispute is resolved
-        if ($validated['status'] === 'resolved' && isset($validated['resolution'])) {
+        // Notify parties when dispute is resolved
+        if ($validated['status'] === 'resolved' && $normalizedResolution) {
             $order = $dispute->order;
-            $order->buyer->notify(new DisputeResolved($dispute, $validated['resolution']));
-            $order->seller->notify(new DisputeResolved($dispute, $validated['resolution']));
+            $order->buyer->notify(new DisputeResolved($dispute, $normalizedResolution));
+            $order->seller->notify(new DisputeResolved($dispute, $normalizedResolution));
         }
 
-        // If resolved, release or refund funds based on resolution
-        if ($validated['status'] === 'resolved' && isset($validated['resolution'])) {
+        // Handle financial resolution when in escrow
+        if ($validated['status'] === 'resolved' && $normalizedResolution) {
             $order = $dispute->order;
-            
-            // Only process if order is in escrow
+
             if ($order->status === 'disputed' && $order->escrow_hold_at) {
-                DB::transaction(function () use ($order, $validated) {
-                    if ($validated['resolution'] === 'refund_buyer') {
-                        // Refund buyer - move funds from escrow back to buyer's available balance
+                DB::transaction(function () use ($order, $normalizedResolution) {
+                    if ($normalizedResolution === 'refund_buyer') {
                         $buyerWallet = Wallet::lockForUpdate()
                             ->firstOrCreate(
                                 ['user_id' => $order->buyer_id],
                                 ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                             );
-                        
-                        // Validate escrow balance
+
                         if ($buyerWallet->on_hold_balance < $order->amount) {
                             throw new \Exception(MessageHelper::ORDER_INSUFFICIENT_ESCROW);
                         }
-                        
+
                         $buyerWallet->available_balance += $order->amount;
                         $buyerWallet->on_hold_balance -= $order->amount;
                         $buyerWallet->save();
-                        
+
                         $order->status = 'cancelled';
-                    } elseif ($validated['resolution'] === 'release_to_seller') {
-                        // Release to seller - move funds from escrow to seller's available balance
+                    } elseif ($normalizedResolution === 'release_to_seller') {
                         $sellerWallet = Wallet::lockForUpdate()
                             ->firstOrCreate(
                                 ['user_id' => $order->seller_id],
                                 ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                             );
-                        
-                        // For seller, we need to check buyer's escrow balance
+
                         $buyerWallet = Wallet::lockForUpdate()
                             ->firstOrCreate(
                                 ['user_id' => $order->buyer_id],
                                 ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                             );
-                        
+
                         if ($buyerWallet->on_hold_balance < $order->amount) {
                             throw new \Exception(MessageHelper::ORDER_INSUFFICIENT_ESCROW);
                         }
-                        
-                        // Move from buyer's escrow to seller's available balance
+
                         $buyerWallet->on_hold_balance -= $order->amount;
                         $buyerWallet->save();
-                        
+
                         $sellerWallet->available_balance += $order->amount;
                         $sellerWallet->save();
-                        
+
                         $order->status = 'completed';
                         $order->completed_at = now();
                     }
-                    
+
                     $order->save();
                 });
             }
         }
 
         return response()->json($dispute->load(['order', 'initiator', 'resolver']));
+    }
+
+    private function normalizeResolution(?string $resolution): ?string
+    {
+        return match ($resolution) {
+            'buyer' => 'refund_buyer',
+            'seller' => 'release_to_seller',
+            'refund_buyer', 'release_to_seller' => $resolution,
+            default => null,
+        };
     }
 
     /**
