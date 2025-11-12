@@ -53,15 +53,25 @@ class ListingController extends Controller
         $page = $request->get('page', 1);
         $perPage = min($request->get('per_page', 20), 100);
         
+        $transformPaginated = function ($paginator) use ($request) {
+            $paginator->getCollection()->transform(function (Listing $listing) use ($request) {
+                return $this->transformListing($listing);
+            });
+
+            return $paginator->toArray();
+        };
+
         // Cache paginated results for 10 minutes
-        // Note: Only cache first page to avoid cache bloat
+        // Note: Only cache first page with no search to avoid cache bloat
         if ($page === 1 && !$request->has('search')) {
-            $listings = Cache::remember($cacheKey, 600, function () use ($query, $request) {
-                return PaginationHelper::paginate($query->orderBy('created_at', 'desc'), $request);
+            $listings = Cache::remember($cacheKey, 600, function () use ($query, $request, $transformPaginated) {
+                $paginator = PaginationHelper::paginate($query->orderBy('created_at', 'desc'), $request);
+                return $transformPaginated($paginator);
             });
         } else {
             // Don't cache search results or paginated pages
-            $listings = PaginationHelper::paginate($query->orderBy('created_at', 'desc'), $request);
+            $paginator = PaginationHelper::paginate($query->orderBy('created_at', 'desc'), $request);
+            $listings = $transformPaginated($paginator);
         }
 
         return response()->json($listings);
@@ -217,26 +227,8 @@ class ListingController extends Controller
         // Increment views
         $listing->increment('views');
 
-        // Hide sensitive data from public view
-        $publicListing = $listing->toArray();
-        
-        // Remove encrypted credential fields (never expose these!)
-        unset($publicListing['account_email_encrypted']);
-        unset($publicListing['account_password_encrypted']);
-
-        // Check if current user can access credentials
         $currentUser = request()->user();
-        $canAccessCredentials = $currentUser && $listing->canAccessCredentials($currentUser);
-
-        if (!$canAccessCredentials) {
-            // Remove credentials info completely for non-authorized users
-            // They should use the /listings/{id}/credentials endpoint after purchase
-            unset($publicListing['account_email']);
-            unset($publicListing['account_password']);
-            
-            // Add flag indicating credentials are available after purchase
-            $publicListing['credentials_available_after_purchase'] = true;
-        }
+        $publicListing = $this->transformListing($listing, true, $currentUser);
 
         return response()->json($publicListing);
     }
@@ -381,24 +373,100 @@ class ListingController extends Controller
         $listing = Listing::findOrFail($id);
         $user = $request->user();
 
-        if (!$listing->canAccessCredentials($user)) {
+        $isOwner = $listing->user_id === $user->id;
+        $isAdmin = $user->isAdmin();
+
+        $buyerOrder = null;
+        $canAccessCredentials = false;
+        $canViewBillImages = false;
+
+        if ($isOwner || $isAdmin) {
+            $canAccessCredentials = true;
+            $canViewBillImages = true;
+        } else {
+            $buyerOrder = Order::where('listing_id', $listing->id)
+                ->where('buyer_id', $user->id)
+                ->latest()
+                ->first();
+
+            if ($buyerOrder) {
+                if (in_array($buyerOrder->status, ['escrow_hold', 'completed'], true)) {
+                    $canAccessCredentials = true;
+                }
+
+                if ($buyerOrder->status === 'completed') {
+                    $canViewBillImages = true;
+                }
+            }
+        }
+
+        if (!$canAccessCredentials) {
             return response()->json([
                 'message' => 'غير مصرح لك بالوصول إلى بيانات الحساب. يجب إتمام عملية الشراء أولاً.',
                 'error_code' => 'CREDENTIALS_ACCESS_DENIED',
             ], 403);
         }
 
+        // Prepare metadata while enforcing bill image visibility rules
+        $metadata = $listing->account_metadata ?? [];
+        if (!$canViewBillImages && is_array($metadata) && array_key_exists('bill_images', $metadata)) {
+            unset($metadata['bill_images']);
+        }
+
         // Log credential access
         AuditHelper::log('listing_credentials_accessed', 'listings', $listing->id, $user->id, [
-            'accessed_by_owner' => $listing->user_id === $user->id,
-            'accessed_by_admin' => $user->isAdmin(),
+            'accessed_by_owner' => $isOwner,
+            'accessed_by_admin' => $isAdmin,
+            'buyer_order_status' => $buyerOrder?->status,
+            'bill_images_unlocked' => $canViewBillImages,
         ]);
 
         return response()->json([
             'listing_id' => $listing->id,
             'account_email' => $listing->account_email,
             'account_password' => $listing->account_password,
-            'account_metadata' => $listing->account_metadata,
+            'account_metadata' => $metadata,
+            'bill_images_unlocked' => $canViewBillImages,
         ]);
+    }
+
+    /**
+     * Transform a listing for public API responses by stripping sensitive data.
+     */
+    private function transformListing(Listing $listing, bool $includeCredentialFlag = false, $currentUser = null): array
+    {
+        $listing->loadMissing('user');
+
+        $data = $listing->toArray();
+
+        // Never expose encrypted or decrypted credentials in public responses
+        unset($data['account_email_encrypted'], $data['account_password_encrypted']);
+        unset($data['account_email'], $data['account_password']);
+
+        // Remove bill images from metadata unless explicitly unlocked elsewhere
+        if (isset($data['account_metadata']) && is_array($data['account_metadata'])) {
+            unset($data['account_metadata']['bill_images']);
+        }
+
+        // Provide a trimmed seller profile instead of the entire user model
+        $data['user'] = null;
+        if ($listing->relationLoaded('user') && $listing->user) {
+            $seller = $listing->user;
+            $data['user'] = [
+                'id' => $seller->id,
+                'name' => $seller->name,
+                'avatar' => $seller->avatar,
+                'is_verified' => (bool) $seller->is_verified,
+                'average_rating' => $seller->average_rating,
+                'total_reviews' => $seller->total_reviews,
+            ];
+        }
+
+        if ($includeCredentialFlag) {
+            $canAccessCredentials = $currentUser && $listing->canAccessCredentials($currentUser);
+            $data['credentials_available_after_purchase'] = !$canAccessCredentials;
+        }
+
+        return $data;
     }
 }

@@ -102,23 +102,25 @@ class AuthController extends Controller
             $email = strtolower(trim($request->email));
             $password = $request->password; // Don't trim password!
 
-            // Debug logging (remove after testing)
-            Log::info('Login attempt', [
-                'email' => $email,
-                'original_email' => $request->email,
-                'password_length' => strlen($password),
-                'has_leading_space' => $password !== ltrim($password),
-                'has_trailing_space' => $password !== rtrim($password),
-            ]);
+            if (config('app.debug')) {
+                Log::debug('Login attempt', [
+                    'email' => $email,
+                ]);
+            }
 
             $user = User::where('email', $email)->first();
 
             if (!$user || !Hash::check($password, $user->password)) {
-                Log::warning('Login failed', [
-                    'email' => $email,
-                    'user_exists' => !!$user,
-                    'password_length' => strlen($password),
-                ]);
+                if (config('app.debug')) {
+                    Log::warning('Login failed', [
+                        'email' => $email,
+                        'user_exists' => (bool) $user,
+                    ]);
+                } else {
+                    Log::warning('Login failed', [
+                        'user_exists' => (bool) $user,
+                    ]);
+                }
                 throw ValidationException::withMessages([
                     'email' => [MessageHelper::AUTH_INVALID_CREDENTIALS],
                 ]);
