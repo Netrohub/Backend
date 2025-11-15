@@ -10,6 +10,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Support\Facades\Password as PasswordFacade;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Support\Str;
 use App\Http\Controllers\MessageHelper;
 
 class AuthController extends Controller
@@ -166,6 +169,70 @@ class AuthController extends Controller
         return response()->json(['message' => 'Logged out successfully.']);
     }
 
+    public function forgotPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $email = strtolower(trim($request->email));
+        $status = PasswordFacade::sendResetLink(['email' => $email]);
+
+        if ($status === PasswordFacade::RESET_LINK_SENT) {
+            return response()->json([
+                'message' => trans($status),
+            ]);
+        }
+
+        return response()->json([
+            'message' => trans($status),
+        ], 400);
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'token' => 'required|string',
+            'email' => 'required|email',
+            'password' => [
+                'required',
+                'confirmed',
+                Password::min(8)
+                    ->mixedCase()
+                    ->numbers()
+                    ->symbols()
+                    ->uncompromised(),
+            ],
+        ]);
+
+        $credentials = $request->only('email', 'password', 'password_confirmation', 'token');
+        $credentials['email'] = strtolower(trim($credentials['email']));
+
+        $status = PasswordFacade::reset(
+            $credentials,
+            function ($user, $password) {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                    'remember_token' => Str::random(60),
+                ])->save();
+
+                $user->tokens()->delete();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status === PasswordFacade::PASSWORD_RESET) {
+            return response()->json([
+                'message' => trans($status),
+            ]);
+        }
+
+        return response()->json([
+            'message' => trans($status),
+        ], 400);
+    }
+
     public function user(Request $request)
     {
         $user = $request->user()->load(['wallet', 'kycVerification']);
@@ -316,7 +383,9 @@ class AuthController extends Controller
             }
 
             $imageId = $responseData['result']['id'];
-            $avatarUrl = "https://imagedelivery.net/{$accountHash}/{$imageId}/avatar";
+            // Use 'public' variant (default, always available) instead of 'avatar'
+            // If you have a custom 'avatar' variant configured in Cloudflare, you can change this
+            $avatarUrl = "https://imagedelivery.net/{$accountHash}/{$imageId}/public";
 
             // Update user avatar
             $user->update(['avatar' => $avatarUrl]);
