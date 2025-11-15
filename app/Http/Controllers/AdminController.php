@@ -234,11 +234,12 @@ class AdminController extends Controller
 
     /**
      * Update suggestion status (for marking as implemented)
+     * Only allows: pending -> implemented
      */
     public function updateSuggestion(Request $request, $id)
     {
         $validated = $request->validate([
-            'status' => 'required|in:pending,approved,implemented',
+            'status' => 'required|in:pending,implemented',
         ]);
 
         $suggestion = Suggestion::findOrFail($id);
