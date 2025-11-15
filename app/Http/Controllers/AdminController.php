@@ -260,6 +260,29 @@ class AdminController extends Controller
     }
 
     /**
+     * Delete a suggestion (admin only)
+     */
+    public function deleteSuggestion(Request $request, $id)
+    {
+        $suggestion = Suggestion::findOrFail($id);
+        $suggestionData = $suggestion->only(['id', 'title', 'status', 'user_id']);
+        
+        $suggestion->delete();
+
+        // Audit log
+        AuditHelper::log(
+            'admin.suggestion.delete',
+            Suggestion::class,
+            $suggestionData['id'],
+            $suggestionData,
+            null,
+            $request
+        );
+
+        return response()->json(['message' => 'Suggestion deleted successfully']);
+    }
+
+    /**
      * Get admin dashboard statistics
      */
     public function stats(Request $request)

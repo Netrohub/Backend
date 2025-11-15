@@ -262,6 +262,7 @@ Route::prefix('v1')->group(function () {
                 
                 // Suggestion management
                 Route::put('/suggestions/{id}', [AdminController::class, 'updateSuggestion']);
+                Route::delete('/suggestions/{id}', [AdminController::class, 'deleteSuggestion']);
             });
         });
     });
