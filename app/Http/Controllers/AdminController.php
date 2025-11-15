@@ -7,7 +7,10 @@ use App\Models\Order;
 use App\Models\User;
 use App\Models\Listing;
 use App\Models\KycVerification;
+use App\Models\Review;
+use App\Models\Suggestion;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
@@ -162,6 +165,97 @@ class AdminController extends Controller
         );
 
         return response()->json($kycs);
+    }
+
+    /**
+     * Get all reviews for admin management
+     */
+    public function reviews(Request $request)
+    {
+        $query = Review::with(['reviewer', 'seller', 'order.listing'])
+            ->withCount('helpfulVoters');
+
+        // Search functionality
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('comment', 'like', '%' . $search . '%')
+                  ->orWhereHas('reviewer', function($q2) use ($search) {
+                      $q2->where('name', 'like', '%' . $search . '%')
+                         ->orWhere('email', 'like', '%' . $search . '%');
+                  })
+                  ->orWhereHas('seller', function($q2) use ($search) {
+                      $q2->where('name', 'like', '%' . $search . '%');
+                  })
+                  ->orWhereHas('order.listing', function($q2) use ($search) {
+                      $q2->where('title', 'like', '%' . $search . '%');
+                  });
+            });
+        }
+
+        // Filter by status (approved, flagged, pending)
+        if ($request->has('status') && !empty($request->status)) {
+            // Check if review has reports (flagged) using subquery
+            if ($request->status === 'flagged') {
+                $query->whereExists(function($q) {
+                    $q->select(DB::raw(1))
+                      ->from('review_reports')
+                      ->whereColumn('review_reports.review_id', 'reviews.id');
+                });
+            } elseif ($request->status === 'approved') {
+                $query->whereNotExists(function($q) {
+                    $q->select(DB::raw(1))
+                      ->from('review_reports')
+                      ->whereColumn('review_reports.review_id', 'reviews.id');
+                });
+            }
+        }
+
+        // Filter by rating
+        if ($request->has('rating') && !empty($request->rating)) {
+            $query->where('rating', $request->rating);
+        }
+
+        $reviews = PaginationHelper::paginate(
+            $query->orderBy('created_at', 'desc'),
+            $request
+        );
+
+        // Add report count for each review
+        $reviews->getCollection()->transform(function ($review) {
+            $review->reports_count = DB::table('review_reports')
+                ->where('review_id', $review->id)
+                ->count();
+            return $review;
+        });
+
+        return response()->json($reviews);
+    }
+
+    /**
+     * Update suggestion status (for marking as implemented)
+     */
+    public function updateSuggestion(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'status' => 'required|in:pending,approved,implemented',
+        ]);
+
+        $suggestion = Suggestion::findOrFail($id);
+        $oldStatus = $suggestion->status;
+        $suggestion->update(['status' => $validated['status']]);
+
+        // Audit log
+        AuditHelper::log(
+            'admin.suggestion.update',
+            Suggestion::class,
+            $suggestion->id,
+            ['status' => $oldStatus],
+            ['status' => $validated['status']],
+            $request
+        );
+
+        return response()->json($suggestion->load('user'));
     }
 
     /**

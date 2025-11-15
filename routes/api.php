@@ -37,6 +37,8 @@ Route::prefix('v1')->group(function () {
     Route::middleware('throttle:5,1')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
         Route::post('/login', [AuthController::class, 'login']);
+        Route::post('/password/forgot', [AuthController::class, 'forgotPassword']);
+        Route::post('/password/reset', [AuthController::class, 'resetPassword']);
     });
     
     // Email verification (requires signed URL, rate limited to prevent abuse)
@@ -232,6 +234,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/orders', [AdminController::class, 'orders']);
             Route::get('/disputes', [AdminController::class, 'disputes']);
             Route::get('/kyc', [AdminController::class, 'kyc']);
+            Route::get('/reviews', [AdminController::class, 'reviews']);
             Route::get('/settings', [SettingsController::class, 'index']);
             
             // Write operations (rate limiting for safety)
@@ -256,6 +259,9 @@ Route::prefix('v1')->group(function () {
                 Route::put('/settings/{key}', [SettingsController::class, 'update']);
                 Route::post('/settings/bulk', [SettingsController::class, 'bulkUpdate']);
                 Route::delete('/settings/{key}', [SettingsController::class, 'destroy']);
+                
+                // Suggestion management
+                Route::put('/suggestions/{id}', [AdminController::class, 'updateSuggestion']);
             });
         });
     });
