@@ -52,6 +52,9 @@ Route::prefix('v1')->group(function () {
     // Site Settings (public read for terms & privacy)
     Route::get('/site-settings/{key}', [SiteSettingController::class, 'show']);
     
+    // Public maintenance status check
+    Route::get('/public/maintenance-status', [SettingsController::class, 'maintenanceStatus']);
+    
     // Listings (public - anyone can browse, but creating/updating requires auth)
     Route::get('/listings', [ListingController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/listings/{id}', [ListingController::class, 'show'])->middleware('throttle:30,1');

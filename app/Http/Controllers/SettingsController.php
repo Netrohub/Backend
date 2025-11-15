@@ -180,6 +180,25 @@ class SettingsController extends Controller
     }
 
     /**
+     * Get maintenance mode status (public endpoint)
+     */
+    public function maintenanceStatus()
+    {
+        $setting = Cache::remember("setting_maintenance_mode", 60, function () {
+            return DB::table('settings')->where('key', 'maintenance_mode')->first();
+        });
+
+        $maintenanceMode = false;
+        if ($setting) {
+            $maintenanceMode = $this->parseValue($setting->value, $setting->type);
+        }
+
+        return response()->json([
+            'maintenance_mode' => (bool)$maintenanceMode,
+        ]);
+    }
+
+    /**
      * Parse value from string based on type
      */
     private function parseValue($value, $type)
