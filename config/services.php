@@ -64,4 +64,9 @@ return [
         'redirect_uri' => env('APP_URL') . '/api/v1/tiktok/callback',
     ],
 
+    'turnstile' => [
+        'secret_key' => env('TURNSTILE_SECRET_KEY'),
+        'site_key' => env('TURNSTILE_SITE_KEY'),
+    ],
+
 ];
