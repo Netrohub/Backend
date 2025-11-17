@@ -43,31 +43,37 @@ class OrderController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $listing = Listing::findOrFail($validated['listing_id']);
-
-        if ($listing->user_id === $request->user()->id) {
-            return response()->json(['message' => MessageHelper::ORDER_CANNOT_BUY_OWN], 400);
-        }
-
-        if ($listing->status !== 'active') {
-            return response()->json([
-                'message' => MessageHelper::ORDER_NOT_AVAILABLE,
-                'error_code' => 'LISTING_NOT_AVAILABLE',
-            ], 400);
-        }
-
         try {
-            // Wrap order creation in transaction for data consistency
-            $order = DB::transaction(function () use ($validated, $listing, $request) {
-                // DO NOT mark listing as sold here - only mark as sold after payment is confirmed
-                // This prevents accounts from being marked as sold if payment fails
-                
+            // Wrap order creation in transaction with pessimistic locking to prevent race conditions
+            $order = DB::transaction(function () use ($validated, $request) {
+                // SECURITY: Lock listing row to prevent concurrent orders for same listing
+                $listing = Listing::lockForUpdate()->findOrFail($validated['listing_id']);
+
+                // Re-check authorization after lock
+                if ($listing->user_id === $request->user()->id) {
+                    throw new \Exception(MessageHelper::ORDER_CANNOT_BUY_OWN);
+                }
+
+                // Re-check status after lock (prevents race condition)
+                if ($listing->status !== 'active') {
+                    throw new \Exception(MessageHelper::ORDER_NOT_AVAILABLE);
+                }
+
+                // SECURITY: Check for existing active orders to prevent double-selling
+                $existingOrder = Order::where('listing_id', $listing->id)
+                    ->whereIn('status', ['payment_intent', 'escrow_hold', 'disputed'])
+                    ->first();
+
+                if ($existingOrder) {
+                    throw new \Exception('This listing already has an active order. Please try another listing.');
+                }
+
                 // Create payment intent (not a real order yet - only becomes order after payment confirmation)
                 return Order::create([
                     'listing_id' => $listing->id,
                     'buyer_id' => $request->user()->id,
                     'seller_id' => $listing->user_id,
-                    'amount' => $listing->price,
+                    'amount' => $listing->price, // Always use current listing price
                     'status' => 'payment_intent', // Not a real order until payment is confirmed
                     'notes' => $validated['notes'] ?? null,
                 ]);

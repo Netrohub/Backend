@@ -58,30 +58,66 @@ class WebhookController extends Controller
             return response()->json(['message' => MessageHelper::WEBHOOK_PAYMENT_NOT_FOUND], 404);
         }
 
-        // Update payment
-        $payment->status = match($status) {
-            'CAPTURED' => 'captured',
-            'AUTHORIZED' => 'authorized',
-            'FAILED' => 'failed',
-            'CANCELLED' => 'cancelled',
-            default => $payment->status,
-        };
+        $order = $payment->order;
+
+        // SECURITY: Check if payment already processed BEFORE updating (prevent webhook replay attacks)
+        if ($status === 'CAPTURED' && $payment->status === 'captured') {
+            Log::warning('Duplicate CAPTURED webhook received - payment already processed', [
+                'charge_id' => $chargeId,
+                'order_id' => $order->id,
+                'payment_id' => $payment->id,
+            ]);
+            return response()->json(['message' => 'Payment already processed'], 200);
+        }
+
+        // Update payment status (only if not already captured)
+        if ($payment->status !== 'captured') {
+            $payment->status = match($status) {
+                'CAPTURED' => 'captured',
+                'AUTHORIZED' => 'authorized',
+                'FAILED' => 'failed',
+                'CANCELLED' => 'cancelled',
+                default => $payment->status,
+            };
+        }
 
         $payment->webhook_payload = $payload;
         
-        if ($status === 'CAPTURED') {
+        if ($status === 'CAPTURED' && !$payment->captured_at) {
             $payment->captured_at = now();
         }
 
         $payment->save();
 
-        $order = $payment->order;
-
         // Handle CAPTURED status - THIS IS WHEN ORDER BECOMES REAL (after payment confirmation)
         // Only process if order is still in payment_intent status (not yet a real order)
         if ($status === 'CAPTURED' && $order->status === 'payment_intent') {
-            // Wrap in transaction to prevent race conditions
-            DB::transaction(function () use ($order, $request) {
+
+            // Wrap in transaction with pessimistic locking to prevent race conditions
+            DB::transaction(function () use ($order, $payment, $request, $chargeId) {
+                // SECURITY: Reload order with lock to prevent concurrent processing
+                $order = Order::lockForUpdate()->find($order->id);
+                
+                // Double-check status after lock (prevents duplicate processing)
+                if ($order->status !== 'payment_intent') {
+                    Log::warning('Order status changed before webhook processing', [
+                        'order_id' => $order->id,
+                        'current_status' => $order->status,
+                    ]);
+                    return; // Already processed by another webhook
+                }
+
+                // Reload payment with lock
+                $payment = \App\Models\Payment::lockForUpdate()->find($payment->id);
+                
+                // Double-check payment status
+                if ($payment->status === 'captured') {
+                    Log::warning('Payment already captured before webhook processing', [
+                        'payment_id' => $payment->id,
+                    ]);
+                    return; // Already processed
+                }
+
                 // Get buyer wallet with lock
                 $buyerWallet = Wallet::lockForUpdate()
                     ->firstOrCreate(
@@ -104,6 +140,11 @@ class WebhookController extends Controller
                 $order->escrow_hold_at = now();
                 $order->escrow_release_at = now()->addHours(12);
                 $order->save();
+
+                // Update payment status to captured
+                $payment->status = 'captured';
+                $payment->captured_at = now();
+                $payment->save();
 
                 // Mark listing as sold only after payment is confirmed (order is now real)
                 $listing = $order->listing;

@@ -27,7 +27,7 @@ class PaymentController extends Controller
             'order_id' => 'required|exists:orders,id',
         ]);
 
-        $order = Order::findOrFail($validated['order_id']);
+        $order = Order::with('listing')->findOrFail($validated['order_id']);
 
         if ($order->buyer_id !== $request->user()->id) {
             return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
@@ -38,6 +38,30 @@ class PaymentController extends Controller
             return response()->json([
                 'message' => 'لا يمكن الدفع لهذا الطلب. الطلب غير صالح أو تم الدفع مسبقاً.',
                 'error_code' => 'ORDER_NOT_PAYMENT_INTENT',
+            ], 400);
+        }
+
+        // SECURITY: Validate order amount matches current listing price (prevent price manipulation)
+        if ($order->listing && abs($order->amount - $order->listing->price) > 0.01) {
+            return response()->json([
+                'message' => 'Order amount does not match listing price. Please create a new order.',
+                'error_code' => 'ORDER_AMOUNT_MISMATCH',
+            ], 400);
+        }
+
+        // SECURITY: Check for existing payment to prevent duplicate payment attempts (idempotency)
+        $existingPayment = \App\Models\Payment::where('order_id', $order->id)
+            ->whereIn('status', ['initiated', 'authorized', 'captured'])
+            ->first();
+
+        if ($existingPayment) {
+            // Return existing payment info instead of creating duplicate
+            $tapResponse = $existingPayment->tap_response ?? [];
+            return response()->json([
+                'message' => 'Payment already initiated for this order',
+                'payment' => $existingPayment,
+                'redirect_url' => $tapResponse['transaction']['url'] ?? null,
+                'error_code' => 'PAYMENT_ALREADY_EXISTS',
             ], 400);
         }
 
