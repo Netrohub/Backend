@@ -53,6 +53,27 @@ class AdminController extends Controller
         ]);
 
         $user = User::findOrFail($id);
+        $currentAdmin = $request->user();
+        
+        // SECURITY: Prevent admin from changing their own role (prevents self-demotion)
+        if (isset($validated['role']) && $user->id === $currentAdmin->id) {
+            return response()->json([
+                'message' => 'لا يمكنك تغيير دورك الخاص. يرجى طلب مساعدة من مدير آخر.',
+                'error_code' => 'CANNOT_CHANGE_OWN_ROLE',
+            ], 400);
+        }
+        
+        // SECURITY: Prevent removing the last admin (ensure at least one admin exists)
+        if (isset($validated['role']) && $validated['role'] === 'user' && $user->role === 'admin') {
+            $adminCount = User::where('role', 'admin')->count();
+            if ($adminCount <= 1) {
+                return response()->json([
+                    'message' => 'لا يمكن إزالة آخر مدير في النظام. يجب أن يكون هناك مدير واحد على الأقل.',
+                    'error_code' => 'CANNOT_REMOVE_LAST_ADMIN',
+                ], 400);
+            }
+        }
+        
         $oldValues = $user->only(['role', 'is_verified', 'name', 'email']);
         $user->update($validated);
 
