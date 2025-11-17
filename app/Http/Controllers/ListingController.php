@@ -21,9 +21,10 @@ class ListingController extends Controller
     const MAX_ACTIVE_LISTINGS_PER_USER = 20; // Max active listings per user
     public function index(Request $request)
     {
-        // Only show listings from active (non-deleted) users
+        // Show both active and sold listings from active (non-deleted) users
+        // Sold listings remain visible but are marked as non-accessible
         $query = Listing::with('user')
-            ->where('status', 'active')
+            ->whereIn('status', ['active', 'sold'])
             ->fromActiveUsers();
 
         if ($request->has('category')) {
