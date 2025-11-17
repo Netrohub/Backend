@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
@@ -121,18 +122,6 @@ class ListingController extends Controller
     {
         $user = $request->user();
 
-        // Check max active listings per user
-        $activeListingsCount = Listing::where('user_id', $user->id)
-            ->where('status', 'active')
-            ->count();
-
-        if ($activeListingsCount >= self::MAX_ACTIVE_LISTINGS_PER_USER) {
-            return response()->json([
-                'message' => 'لقد وصلت إلى الحد الأقصى من الإعلانات النشطة (' . self::MAX_ACTIVE_LISTINGS_PER_USER . '). يرجى حذف أو إيقاف بعض الإعلانات القديمة أولاً.',
-                'error_code' => 'MAX_ACTIVE_LISTINGS_REACHED',
-            ], 400);
-        }
-
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'required|string|max:5000', // Max length for description
@@ -179,27 +168,52 @@ class ListingController extends Controller
             ], 400);
         }
 
-        // Sanitize HTML content to prevent XSS
-        $title = htmlspecialchars(strip_tags($validated['title']), ENT_QUOTES, 'UTF-8');
-        $description = htmlspecialchars(strip_tags($validated['description']), ENT_QUOTES, 'UTF-8');
-        $category = htmlspecialchars(strip_tags($validated['category']), ENT_QUOTES, 'UTF-8');
+        // SECURITY: Wrap listing creation in transaction with pessimistic locking to prevent race conditions
+        try {
+            $listing = DB::transaction(function () use ($user, $validated, $request) {
+                // SECURITY: Check max active listings per user WITH LOCK to prevent race conditions
+                $activeListingsCount = Listing::lockForUpdate()
+                    ->where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->count();
 
-        $listing = new Listing([
-            'user_id' => $user->id,
-            'title' => $title,
-            'description' => $description, // NO passwords here!
-            'price' => $validated['price'],
-            'category' => $category,
-            'images' => $validated['images'] ?? [],
-            'status' => 'active',
-            'account_metadata' => $validated['account_metadata'] ?? null,
-        ]);
+                if ($activeListingsCount >= self::MAX_ACTIVE_LISTINGS_PER_USER) {
+                    throw new \Exception('MAX_ACTIVE_LISTINGS_REACHED');
+                }
 
-        // Set encrypted credentials (uses accessors/mutators)
-        $listing->account_email = $validated['account_email'];
-        $listing->account_password = $validated['account_password'];
-        
-        $listing->save();
+                // Sanitize HTML content to prevent XSS
+                $title = htmlspecialchars(strip_tags($validated['title']), ENT_QUOTES, 'UTF-8');
+                $description = htmlspecialchars(strip_tags($validated['description']), ENT_QUOTES, 'UTF-8');
+                $category = htmlspecialchars(strip_tags($validated['category']), ENT_QUOTES, 'UTF-8');
+
+                $listing = new Listing([
+                    'user_id' => $user->id,
+                    'title' => $title,
+                    'description' => $description, // NO passwords here!
+                    'price' => $validated['price'],
+                    'category' => $category,
+                    'images' => $validated['images'] ?? [],
+                    'status' => 'active',
+                    'account_metadata' => $validated['account_metadata'] ?? null,
+                ]);
+
+                // Set encrypted credentials (uses accessors/mutators)
+                $listing->account_email = $validated['account_email'];
+                $listing->account_password = $validated['account_password'];
+                
+                $listing->save();
+
+                return $listing;
+            });
+        } catch (\Exception $e) {
+            if ($e->getMessage() === 'MAX_ACTIVE_LISTINGS_REACHED') {
+                return response()->json([
+                    'message' => 'لقد وصلت إلى الحد الأقصى من الإعلانات النشطة (' . self::MAX_ACTIVE_LISTINGS_PER_USER . '). يرجى حذف أو إيقاف بعض الإعلانات القديمة أولاً.',
+                    'error_code' => 'MAX_ACTIVE_LISTINGS_REACHED',
+                ], 400);
+            }
+            throw $e;
+        }
 
         // Log listing creation
         AuditHelper::log(
@@ -266,6 +280,48 @@ class ListingController extends Controller
             return response()->json([
                 'message' => 'لا يمكنك تحديد الإعلان كمباع يدوياً. يتم تحديده تلقائياً بعد إتمام الدفع.',
                 'error_code' => 'CANNOT_MANUAL_MARK_SOLD',
+            ], 400);
+        }
+
+        // SECURITY: Check for active REAL orders before allowing certain updates
+        // payment_intent is NOT a real order - only escrow_hold, disputed, and completed are real orders
+        $hasActiveOrders = Order::where('listing_id', $listing->id)
+            ->whereIn('status', ['escrow_hold', 'disputed']) // Only REAL orders (payment confirmed)
+            ->exists();
+
+        $hasCompletedOrders = Order::where('listing_id', $listing->id)
+            ->where('status', 'completed')
+            ->exists();
+
+        // SECURITY: Prevent price changes when listing has active orders
+        if (isset($validated['price']) && $validated['price'] != $listing->price && $hasActiveOrders) {
+            return response()->json([
+                'message' => 'لا يمكن تغيير السعر بينما يوجد طلبات نشطة على الإعلان.',
+                'error_code' => 'CANNOT_CHANGE_PRICE_WITH_ORDERS',
+            ], 400);
+        }
+
+        // SECURITY: Prevent credential changes when listing has active or completed orders
+        if (($hasActiveOrders || $hasCompletedOrders) && (isset($validated['account_email']) || isset($validated['account_password']))) {
+            return response()->json([
+                'message' => 'لا يمكن تغيير بيانات الحساب بينما يوجد طلبات نشطة أو مكتملة على الإعلان.',
+                'error_code' => 'CANNOT_CHANGE_CREDENTIALS_WITH_ORDERS',
+            ], 400);
+        }
+
+        // SECURITY: Prevent status change to inactive when listing has active orders
+        if (isset($validated['status']) && $validated['status'] === 'inactive' && $hasActiveOrders) {
+            return response()->json([
+                'message' => 'لا يمكن إيقاف الإعلان بينما يوجد طلبات نشطة عليه.',
+                'error_code' => 'CANNOT_DEACTIVATE_WITH_ORDERS',
+            ], 400);
+        }
+
+        // SECURITY: Prevent metadata changes when listing has active orders
+        if (isset($validated['account_metadata']) && $hasActiveOrders) {
+            return response()->json([
+                'message' => 'لا يمكن تغيير تفاصيل الإعلان بينما يوجد طلبات نشطة عليه.',
+                'error_code' => 'CANNOT_CHANGE_DETAILS_WITH_ORDERS',
             ], 400);
         }
 
@@ -336,42 +392,57 @@ class ListingController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        $listing = Listing::findOrFail($id);
+        // SECURITY: Wrap deletion in transaction with pessimistic locking to prevent race conditions
+        try {
+            DB::transaction(function () use ($id, $request) {
+                // SECURITY: Lock listing row to prevent concurrent deletion attempts
+                $listing = Listing::lockForUpdate()->findOrFail($id);
 
-        if ($listing->user_id !== $request->user()->id) {
-            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+                if ($listing->user_id !== $request->user()->id) {
+                    throw new \Exception('UNAUTHORIZED');
+                }
+
+                // SECURITY: Check if listing has active REAL orders (exclude payment_intent - those are not orders yet)
+                // Check happens AFTER lock to prevent race conditions
+                $activeOrders = Order::where('listing_id', $listing->id)
+                    ->whereIn('status', ['escrow_hold', 'disputed', 'completed']) // Only real orders block deletion
+                    ->exists();
+
+                if ($activeOrders) {
+                    throw new \Exception('HAS_ACTIVE_ORDERS');
+                }
+
+                $category = $listing->category;
+                
+                // Log deletion
+                AuditHelper::log(
+                    'listing_deleted',
+                    'listings',
+                    $listing->id,
+                    null, // oldValues
+                    ['title' => $listing->title], // newValues
+                    $request
+                );
+
+                $listing->delete();
+
+                // Invalidate listings cache when listing is deleted
+                Cache::forget('listings_' . md5($category . ''));
+            });
+            
+            return response()->json(['message' => 'Listing deleted successfully.']);
+        } catch (\Exception $e) {
+            if ($e->getMessage() === 'UNAUTHORIZED') {
+                return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+            }
+            if ($e->getMessage() === 'HAS_ACTIVE_ORDERS') {
+                return response()->json([
+                    'message' => 'لا يمكن حذف الإعلان لأن لديه طلبات نشطة. يرجى إنهاء أو إلغاء الطلبات أولاً.',
+                    'error_code' => 'HAS_ACTIVE_ORDERS',
+                ], 400);
+            }
+            throw $e;
         }
-
-        // Check if listing has active REAL orders (exclude payment_intent - those are not orders yet)
-        $activeOrders = Order::where('listing_id', $listing->id)
-            ->whereIn('status', ['escrow_hold', 'disputed', 'completed']) // Only real orders block deletion
-            ->exists();
-
-        if ($activeOrders) {
-            return response()->json([
-                'message' => 'لا يمكن حذف الإعلان لأن لديه طلبات نشطة. يرجى إنهاء أو إلغاء الطلبات أولاً.',
-                'error_code' => 'HAS_ACTIVE_ORDERS',
-            ], 400);
-        }
-
-        $category = $listing->category;
-        
-        // Log deletion
-        AuditHelper::log(
-            'listing_deleted',
-            'listings',
-            $listing->id,
-            null, // oldValues
-            ['title' => $listing->title], // newValues
-            $request
-        );
-
-        $listing->delete();
-
-        // Invalidate listings cache when listing is deleted
-        Cache::forget('listings_' . md5($category . ''));
-
-        return response()->json(['message' => 'Listing deleted successfully.']);
     }
 
     /**

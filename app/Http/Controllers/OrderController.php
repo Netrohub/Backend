@@ -59,12 +59,14 @@ class OrderController extends Controller
                     throw new \Exception(MessageHelper::ORDER_NOT_AVAILABLE);
                 }
 
-                // SECURITY: Check for existing active orders to prevent double-selling
-                $existingOrder = Order::where('listing_id', $listing->id)
-                    ->whereIn('status', ['payment_intent', 'escrow_hold', 'disputed'])
+                // SECURITY: Check for existing REAL orders to prevent double-selling
+                // payment_intent is NOT a real order - only escrow_hold, disputed, and completed are real orders
+                // Multiple payment_intent orders are allowed (users can create payment intents before paying)
+                $existingRealOrder = Order::where('listing_id', $listing->id)
+                    ->whereIn('status', ['escrow_hold', 'disputed', 'completed']) // Only REAL orders (payment confirmed)
                     ->first();
 
-                if ($existingOrder) {
+                if ($existingRealOrder) {
                     throw new \Exception('This listing already has an active order. Please try another listing.');
                 }
 

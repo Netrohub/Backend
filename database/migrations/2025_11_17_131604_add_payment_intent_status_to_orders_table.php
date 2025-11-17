@@ -37,21 +37,28 @@ return new class extends Migration
             }
             
             // Add new CHECK constraint with payment_intent
+            // Remove unused statuses: 'pending' and 'paid' (not used in codebase)
+            // Real orders: escrow_hold, disputed, completed
+            // Not real orders: payment_intent (temporary, no payment yet)
             DB::statement("
                 ALTER TABLE orders 
                 ADD CONSTRAINT orders_status_check 
-                CHECK (status IN ('payment_intent', 'pending', 'paid', 'escrow_hold', 'completed', 'cancelled', 'disputed'))
+                CHECK (status IN ('payment_intent', 'escrow_hold', 'completed', 'cancelled', 'disputed'))
             ");
             
             // Set default
             DB::statement("ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'payment_intent'");
         } else {
             // MySQL/MariaDB: Use MODIFY COLUMN
-            DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('payment_intent', 'pending', 'paid', 'escrow_hold', 'completed', 'cancelled', 'disputed') DEFAULT 'payment_intent'");
+            // Remove unused statuses: 'pending' and 'paid' (not used in codebase)
+            DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('payment_intent', 'escrow_hold', 'completed', 'cancelled', 'disputed') DEFAULT 'payment_intent'");
         }
         
-        // Update existing 'pending' orders to 'payment_intent' to maintain consistency
+        // Update existing orders to maintain consistency
+        // 'pending' -> 'payment_intent' (no payment yet, not a real order)
+        // 'paid' -> 'escrow_hold' (payment was confirmed, should be a real order)
         DB::table('orders')->where('status', 'pending')->update(['status' => 'payment_intent']);
+        DB::table('orders')->where('status', 'paid')->update(['status' => 'escrow_hold']);
     }
 
     /**
@@ -71,13 +78,13 @@ return new class extends Migration
             DB::statement("
                 ALTER TABLE orders 
                 ADD CONSTRAINT orders_status_check 
-                CHECK (status IN ('pending', 'paid', 'escrow_hold', 'completed', 'cancelled', 'disputed'))
+                CHECK (status IN ('pending', 'escrow_hold', 'completed', 'cancelled', 'disputed'))
             ");
             
             DB::statement("ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'pending'");
         } else {
             // MySQL/MariaDB: Remove payment_intent from enum
-            DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'paid', 'escrow_hold', 'completed', 'cancelled', 'disputed') DEFAULT 'pending'");
+            DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'escrow_hold', 'completed', 'cancelled', 'disputed') DEFAULT 'pending'");
         }
     }
 };
