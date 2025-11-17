@@ -102,7 +102,7 @@ class OrderController extends Controller
             return response()->json([
                 'message' => $userMessage,
                 'error_code' => $errorCode,
-                'error' => config('app.debug') ? $e->getMessage() : null,
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
             ], 500);
         }
     }

@@ -61,6 +61,17 @@ class ImageController extends Controller
                 continue;
             }
 
+            // SECURITY: Validate file magic bytes to prevent MIME type spoofing
+            $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            if (!\App\Helpers\SecurityHelper::validateFileSignature($file, $allowedMimeTypes)) {
+                Log::warning('File upload rejected: Invalid magic bytes', [
+                    'filename' => $file->getClientOriginalName(),
+                    'mime_type' => $file->getMimeType(),
+                    'user_id' => $request->user()?->id,
+                ]);
+                continue; // Skip this file
+            }
+
             try {
                 // Log upload attempt for debugging
                 Log::info('Attempting Cloudflare Images upload', [

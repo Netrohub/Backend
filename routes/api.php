@@ -116,10 +116,11 @@ Route::prefix('v1')->group(function () {
         });
 
         // Listings (require KYC verification for creating/updating/deleting)
-        Route::middleware('kycVerified')->group(function () {
-            Route::post('/listings', [ListingController::class, 'store'])->middleware('throttle:60,60');
-            Route::put('/listings/{id}', [ListingController::class, 'update'])->middleware('throttle:120,60');
-            Route::delete('/listings/{id}', [ListingController::class, 'destroy'])->middleware('throttle:60,60');
+        // SECURITY: Use account-based rate limiting + origin validation for state-changing operations
+        Route::middleware(['kycVerified', 'validateOrigin'])->group(function () {
+            Route::post('/listings', [ListingController::class, 'store'])->middleware('throttle.user:60,60');
+            Route::put('/listings/{id}', [ListingController::class, 'update'])->middleware('throttle.user:120,60');
+            Route::delete('/listings/{id}', [ListingController::class, 'destroy'])->middleware('throttle.user:60,60');
         });
 
         // My listings (user's own listings only - data isolation)
@@ -130,9 +131,10 @@ Route::prefix('v1')->group(function () {
 
         // Orders (require email verification for creation)
         // Increased limits: 30 orders per hour (reasonable for legitimate users)
-        Route::middleware('verified')->group(function () {
-            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:60,60'); // Increased to 60/hour
-            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle:60,60'); // Increased to 60/hour
+        // SECURITY: Use account-based rate limiting + origin validation for financial operations
+        Route::middleware(['verified', 'validateOrigin'])->group(function () {
+            Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle.user:60,60');
+            Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle.user:60,60');
         });
         
         Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min
@@ -140,8 +142,11 @@ Route::prefix('v1')->group(function () {
         Route::put('/orders/{id}', [OrderController::class, 'update'])->middleware('throttle:120,60');
         
         // Order actions (confirm, cancel)
-        Route::post('/orders/{id}/confirm', [OrderController::class, 'confirm'])->middleware('throttle:60,60');
-        Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->middleware('throttle:60,60');
+        // SECURITY: Use account-based rate limiting + origin validation for order operations
+        Route::middleware('validateOrigin')->group(function () {
+            Route::post('/orders/{id}/confirm', [OrderController::class, 'confirm'])->middleware('throttle.user:60,60');
+            Route::post('/orders/{id}/cancel', [OrderController::class, 'cancel'])->middleware('throttle.user:60,60');
+        });
 
         // Disputes with rate limiting to prevent spam and abuse
         Route::middleware('throttle:30,1')->group(function () {
@@ -180,8 +185,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/wallet', [WalletController::class, 'index']);
         Route::get('/wallet/withdrawals', [WalletController::class, 'withdrawalHistory']);
         
-        // Withdrawal endpoint with rate limiting (increased from 3 to 10 per hour)
-        Route::middleware(['verified', 'throttle:10,60'])->group(function () {
+        // Withdrawal endpoint with account-based rate limiting + origin validation
+        // SECURITY: Financial operations require strict validation
+        Route::middleware(['verified', 'validateOrigin', 'throttle.user:10,60'])->group(function () {
             Route::post('/wallet/withdraw', [WalletController::class, 'withdraw']);
         });
 

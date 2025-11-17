@@ -263,7 +263,7 @@ class WalletController extends Controller
                     'message' => $userMessage,
                     'error_code' => $errorCode,
                     'withdrawal_request' => $withdrawalRequest,
-                    'error' => config('app.debug') ? $e->getMessage() : null,
+                    'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
                 ], 500);
             }
 

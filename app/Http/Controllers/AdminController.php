@@ -28,11 +28,21 @@ class AdminController extends Controller
 
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', '%' . $search . '%')
-                  ->orWhere('email', 'like', '%' . $search . '%');
-            });
+            // SECURITY: Validate and sanitize search input to prevent SQL injection
+            $validated = $request->validate([
+                'search' => 'string|max:255',
+            ]);
+            $search = $validated['search'] ?? '';
+            
+            if (!empty($search)) {
+                // SECURITY: Escape special LIKE characters (% and _) to prevent SQL injection
+                $search = str_replace(['%', '_'], ['\%', '\_'], $search);
+                
+                $query->where(function($q) use ($search) {
+                    $q->where('name', 'like', '%' . $search . '%')
+                      ->orWhere('email', 'like', '%' . $search . '%');
+                });
+            }
         }
 
         $users = PaginationHelper::paginate(
@@ -137,11 +147,21 @@ class AdminController extends Controller
 
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('title', 'like', '%' . $search . '%')
-                  ->orWhere('description', 'like', '%' . $search . '%');
-            });
+            // SECURITY: Validate and sanitize search input to prevent SQL injection
+            $validated = $request->validate([
+                'search' => 'string|max:255',
+            ]);
+            $search = $validated['search'] ?? '';
+            
+            if (!empty($search)) {
+                // SECURITY: Escape special LIKE characters (% and _) to prevent SQL injection
+                $search = str_replace(['%', '_'], ['\%', '\_'], $search);
+                
+                $query->where(function($q) use ($search) {
+                    $q->where('title', 'like', '%' . $search . '%')
+                      ->orWhere('description', 'like', '%' . $search . '%');
+                });
+            }
         }
 
         $listings = PaginationHelper::paginate(
@@ -160,16 +180,26 @@ class AdminController extends Controller
 
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('id', 'like', '%' . $search . '%')
-                  ->orWhereHas('buyer', function($q2) use ($search) {
-                      $q2->where('name', 'like', '%' . $search . '%');
-                  })
-                  ->orWhereHas('seller', function($q2) use ($search) {
-                      $q2->where('name', 'like', '%' . $search . '%');
-                  });
-            });
+            // SECURITY: Validate and sanitize search input to prevent SQL injection
+            $validated = $request->validate([
+                'search' => 'string|max:255',
+            ]);
+            $search = $validated['search'] ?? '';
+            
+            if (!empty($search)) {
+                // SECURITY: Escape special LIKE characters (% and _) to prevent SQL injection
+                $search = str_replace(['%', '_'], ['\%', '\_'], $search);
+                
+                $query->where(function($q) use ($search) {
+                    $q->where('id', 'like', '%' . $search . '%')
+                      ->orWhereHas('buyer', function($q2) use ($search) {
+                          $q2->where('name', 'like', '%' . $search . '%');
+                      })
+                      ->orWhereHas('seller', function($q2) use ($search) {
+                          $q2->where('name', 'like', '%' . $search . '%');
+                      });
+                });
+            }
         }
 
         $orders = PaginationHelper::paginate(
@@ -201,20 +231,30 @@ class AdminController extends Controller
 
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('comment', 'like', '%' . $search . '%')
-                  ->orWhereHas('reviewer', function($q2) use ($search) {
-                      $q2->where('name', 'like', '%' . $search . '%')
-                         ->orWhere('email', 'like', '%' . $search . '%');
-                  })
-                  ->orWhereHas('seller', function($q2) use ($search) {
-                      $q2->where('name', 'like', '%' . $search . '%');
-                  })
-                  ->orWhereHas('order.listing', function($q2) use ($search) {
-                      $q2->where('title', 'like', '%' . $search . '%');
-                  });
-            });
+            // SECURITY: Validate and sanitize search input to prevent SQL injection
+            $validated = $request->validate([
+                'search' => 'string|max:255',
+            ]);
+            $search = $validated['search'] ?? '';
+            
+            if (!empty($search)) {
+                // SECURITY: Escape special LIKE characters (% and _) to prevent SQL injection
+                $search = str_replace(['%', '_'], ['\%', '\_'], $search);
+                
+                $query->where(function($q) use ($search) {
+                    $q->where('comment', 'like', '%' . $search . '%')
+                      ->orWhereHas('reviewer', function($q2) use ($search) {
+                          $q2->where('name', 'like', '%' . $search . '%')
+                             ->orWhere('email', 'like', '%' . $search . '%');
+                      })
+                      ->orWhereHas('seller', function($q2) use ($search) {
+                          $q2->where('name', 'like', '%' . $search . '%');
+                      })
+                      ->orWhereHas('order.listing', function($q2) use ($search) {
+                          $q2->where('title', 'like', '%' . $search . '%');
+                      });
+                });
+            }
         }
 
         // Filter by status (approved, flagged, pending)

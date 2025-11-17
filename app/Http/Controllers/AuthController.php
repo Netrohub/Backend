@@ -88,7 +88,7 @@ class AuthController extends Controller
             return response()->json([
                 'message' => $userMessage,
                 'error_code' => $errorCode,
-                'error' => config('app.debug') ? $e->getMessage() : null
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e)
             ], 500);
         }
     }
@@ -157,7 +157,7 @@ class AuthController extends Controller
             return response()->json([
                 'message' => $userMessage,
                 'error_code' => $errorCode,
-                'error' => config('app.debug') ? $e->getMessage() : null
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e)
             ], 500);
         }
     }
@@ -321,6 +321,20 @@ class AuthController extends Controller
         if (!$file || !$file->isValid()) {
             return response()->json([
                 'message' => 'Invalid file uploaded',
+            ], 400);
+        }
+
+        // SECURITY: Validate file magic bytes to prevent MIME type spoofing
+        $allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if (!\App\Helpers\SecurityHelper::validateFileSignature($file, $allowedMimeTypes)) {
+            Log::warning('Avatar upload rejected: Invalid magic bytes', [
+                'filename' => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType(),
+                'user_id' => $user->id,
+            ]);
+            return response()->json([
+                'message' => 'Invalid file type. Please upload a valid image file.',
+                'error_code' => 'INVALID_FILE_SIGNATURE',
             ], 400);
         }
 
