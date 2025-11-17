@@ -253,11 +253,20 @@ class ListingController extends Controller
             'category' => 'sometimes|string|max:100',
             'images' => 'sometimes|array|max:' . self::MAX_IMAGES,
             'images.*' => 'url|max:2048', // Each image must be a valid URL
-            'status' => 'sometimes|in:active,inactive,sold',
+            'status' => 'sometimes|in:active,inactive', // Sellers cannot manually set to 'sold' - only via payment confirmation
             'account_email' => 'sometimes|email|max:255',
             'account_password' => 'sometimes|string|max:255',
             'account_metadata' => 'sometimes|array',
         ]);
+        
+        // Prevent sellers from manually marking listings as sold
+        // Status 'sold' can only be set automatically via payment confirmation webhook
+        if (isset($validated['status']) && $validated['status'] === 'sold') {
+            return response()->json([
+                'message' => 'لا يمكنك تحديد الإعلان كمباع يدوياً. يتم تحديده تلقائياً بعد إتمام الدفع.',
+                'error_code' => 'CANNOT_MANUAL_MARK_SOLD',
+            ], 400);
+        }
 
         // Sanitize HTML content to prevent XSS
         if (isset($validated['title'])) {
