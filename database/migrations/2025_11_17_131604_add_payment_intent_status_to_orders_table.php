@@ -48,6 +48,12 @@ return new class extends Migration
             
             // Set default
             DB::statement("ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'payment_intent'");
+        } elseif ($driver === 'sqlite') {
+            // SQLite: Limited ALTER TABLE support
+            // SQLite doesn't support MODIFY COLUMN, ENUM, or adding CHECK constraints via ALTER TABLE
+            // We can only update the data - the application layer will enforce enum values
+            // Note: For SQLite, enum validation happens at the application level (Laravel validation)
+            // This is acceptable as SQLite is typically only used for local development
         } else {
             // MySQL/MariaDB: Use MODIFY COLUMN
             // Remove unused statuses: 'pending' and 'paid' (not used in codebase)
@@ -82,6 +88,9 @@ return new class extends Migration
             ");
             
             DB::statement("ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'pending'");
+        } elseif ($driver === 'sqlite') {
+            // SQLite: Just update data, constraint handling is limited
+            // No need to modify constraint as SQLite doesn't enforce it strictly
         } else {
             // MySQL/MariaDB: Remove payment_intent from enum
             DB::statement("ALTER TABLE orders MODIFY COLUMN status ENUM('pending', 'escrow_hold', 'completed', 'cancelled', 'disputed') DEFAULT 'pending'");
