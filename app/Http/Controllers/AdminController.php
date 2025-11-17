@@ -504,9 +504,16 @@ class AdminController extends Controller
             $request
         );
 
+        // Revert listing back to active if it was marked as sold
+        $listing = $order->listing;
+        if ($listing && $listing->status === 'sold') {
+            $listing->status = 'active';
+            $listing->save();
+        }
+
         // Notify both parties
-        $order->buyer->notify(new \App\Notifications\OrderStatusChanged($order));
-        $order->seller->notify(new \App\Notifications\OrderStatusChanged($order));
+        $order->buyer->notify(new \App\Notifications\OrderStatusChanged($order, $oldStatus, 'cancelled'));
+        $order->seller->notify(new \App\Notifications\OrderStatusChanged($order, $oldStatus, 'cancelled'));
 
         return response()->json([
             'message' => 'Order cancelled successfully',

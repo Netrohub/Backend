@@ -102,6 +102,13 @@ class WebhookController extends Controller
                 $order->escrow_release_at = now()->addHours(12);
                 $order->save();
 
+                // Mark listing as sold only after payment is confirmed
+                $listing = $order->listing;
+                if ($listing && $listing->status === 'active') {
+                    $listing->status = 'sold';
+                    $listing->save();
+                }
+
                 // Audit log for order status change
                 AuditHelper::log(
                     'order.status_changed',

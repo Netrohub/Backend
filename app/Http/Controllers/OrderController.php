@@ -56,9 +56,8 @@ class OrderController extends Controller
         try {
             // Wrap order creation in transaction for data consistency
             $order = DB::transaction(function () use ($validated, $listing, $request) {
-                // Mark listing as sold immediately to prevent double purchases
-                $listing->status = 'sold';
-                $listing->save();
+                // DO NOT mark listing as sold here - only mark as sold after payment is confirmed
+                // This prevents accounts from being marked as sold if payment fails
                 
                 return Order::create([
                     'listing_id' => $listing->id,
@@ -150,6 +149,13 @@ class OrderController extends Controller
             $oldStatus = $order->status;
             $order->status = 'cancelled';
             $order->save();
+            
+            // Revert listing back to active if it was marked as sold
+            $listing = $order->listing;
+            if ($listing && $listing->status === 'sold') {
+                $listing->status = 'active';
+                $listing->save();
+            }
             
             // Audit log for order cancellation
             AuditHelper::log(
@@ -285,6 +291,13 @@ class OrderController extends Controller
         $oldStatus = $order->status;
         $order->status = 'cancelled';
         $order->save();
+        
+        // Revert listing back to active if it was marked as sold
+        $listing = $order->listing;
+        if ($listing && $listing->status === 'sold') {
+            $listing->status = 'active';
+            $listing->save();
+        }
         
         // Audit log
         AuditHelper::log(
