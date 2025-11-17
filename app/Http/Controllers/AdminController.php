@@ -9,6 +9,7 @@ use App\Models\Listing;
 use App\Models\KycVerification;
 use App\Models\Review;
 use App\Models\Suggestion;
+use App\Models\Wallet;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\MessageHelper;
@@ -132,7 +133,9 @@ class AdminController extends Controller
 
     public function orders(Request $request)
     {
-        $query = Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment']);
+        // CRITICAL: Only show REAL orders (exclude payment_intent - those are not orders yet)
+        $query = Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
+            ->where('status', '!=', 'payment_intent'); // Exclude payment intents - they're not real orders
 
         // Search functionality
         if ($request->has('search') && !empty($request->search)) {
@@ -320,14 +323,18 @@ class AdminController extends Controller
                     ->count();
                 $listingsGrowth = $calculateGrowth($currentMonthListings, $lastMonthListings);
 
-                $currentMonthOrders = Order::whereMonth('created_at', $now->month)
+                // Only count REAL orders (exclude payment_intent - not orders yet)
+                $currentMonthOrders = Order::where('status', '!=', 'payment_intent')
+                    ->whereMonth('created_at', $now->month)
                     ->whereYear('created_at', $now->year)
                     ->count();
-                $lastMonthOrders = Order::whereMonth('created_at', $lastMonth->month)
+                $lastMonthOrders = Order::where('status', '!=', 'payment_intent')
+                    ->whereMonth('created_at', $lastMonth->month)
                     ->whereYear('created_at', $lastMonth->year)
                     ->count();
                 $ordersGrowth = $calculateGrowth($currentMonthOrders, $lastMonthOrders);
 
+                // Only count revenue from REAL completed orders (completed status excludes payment_intent automatically)
                 $currentMonthRevenue = Order::where('status', 'completed')
                     ->whereMonth('created_at', $now->month)
                     ->whereYear('created_at', $now->year)
@@ -477,6 +484,15 @@ class AdminController extends Controller
             ], 400);
         }
 
+        // Handle payment_intent cancellation (not a real order yet, just delete it)
+        if ($order->status === 'payment_intent') {
+            $order->delete();
+            return response()->json([
+                'message' => 'Payment intent deleted (was not a real order)',
+                'order' => null,
+            ], 200);
+        }
+
         $oldStatus = $order->status;
         $order->status = 'cancelled';
         $order->cancellation_reason = $validated['reason'];
@@ -484,14 +500,22 @@ class AdminController extends Controller
         $order->cancelled_at = now();
         $order->save();
 
-        // Refund logic if payment was made
-        if ($order->payment && $order->payment->status === 'paid') {
-            // Return to buyer's wallet
-            $buyerWallet = $order->buyer->wallet;
-            if ($buyerWallet) {
-                $buyerWallet->available_balance += $order->amount;
-                $buyerWallet->save();
-            }
+        // Refund logic if payment was made (only for real orders)
+        if ($order->status === 'escrow_hold' && $order->payment) {
+            DB::transaction(function () use ($order) {
+                $buyerWallet = Wallet::lockForUpdate()
+                    ->firstOrCreate(
+                        ['user_id' => $order->buyer_id],
+                        ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                    );
+                
+                // Validate balance before refund
+                if ($buyerWallet->on_hold_balance >= $order->amount) {
+                    $buyerWallet->available_balance += $order->amount;
+                    $buyerWallet->on_hold_balance -= $order->amount;
+                    $buyerWallet->save();
+                }
+            });
         }
 
         // Audit log

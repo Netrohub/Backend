@@ -341,9 +341,9 @@ class ListingController extends Controller
             return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
         }
 
-        // Check if listing has active orders
+        // Check if listing has active REAL orders (exclude payment_intent - those are not orders yet)
         $activeOrders = Order::where('listing_id', $listing->id)
-            ->whereIn('status', ['pending', 'escrow_hold', 'in_dispute'])
+            ->whereIn('status', ['escrow_hold', 'disputed', 'completed']) // Only real orders block deletion
             ->exists();
 
         if ($activeOrders) {

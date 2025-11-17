@@ -33,8 +33,12 @@ class PaymentController extends Controller
             return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
         }
 
-        if ($order->status !== 'pending') {
-            return response()->json(['message' => MessageHelper::ORDER_NOT_PENDING], 400);
+        // Only allow payment for payment_intent status (not yet a real order)
+        if ($order->status !== 'payment_intent') {
+            return response()->json([
+                'message' => 'لا يمكن الدفع لهذا الطلب. الطلب غير صالح أو تم الدفع مسبقاً.',
+                'error_code' => 'ORDER_NOT_PAYMENT_INTENT',
+            ], 400);
         }
 
         // Ensure buyer has sufficient balance (if wallet-based payment)

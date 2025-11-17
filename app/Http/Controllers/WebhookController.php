@@ -77,8 +77,9 @@ class WebhookController extends Controller
 
         $order = $payment->order;
 
-        // Handle CAPTURED status - credit buyer and move to escrow
-        if ($status === 'CAPTURED' && $order->status === 'pending') {
+        // Handle CAPTURED status - THIS IS WHEN ORDER BECOMES REAL (after payment confirmation)
+        // Only process if order is still in payment_intent status (not yet a real order)
+        if ($status === 'CAPTURED' && $order->status === 'payment_intent') {
             // Wrap in transaction to prevent race conditions
             DB::transaction(function () use ($order, $request) {
                 // Get buyer wallet with lock
@@ -94,7 +95,9 @@ class WebhookController extends Controller
                 $buyerWallet->on_hold_balance += $order->amount;
                 $buyerWallet->save();
 
-                // Update order
+                // CRITICAL: This is when the order becomes REAL (changes from payment_intent to escrow_hold)
+                // payment_intent = temporary, not a real order
+                // escrow_hold = real order, payment confirmed
                 $oldStatus = $order->status;
                 $order->status = 'escrow_hold';
                 $order->paid_at = now();
@@ -102,23 +105,24 @@ class WebhookController extends Controller
                 $order->escrow_release_at = now()->addHours(12);
                 $order->save();
 
-                // Mark listing as sold only after payment is confirmed
+                // Mark listing as sold only after payment is confirmed (order is now real)
                 $listing = $order->listing;
                 if ($listing && $listing->status === 'active') {
                     $listing->status = 'sold';
                     $listing->save();
                 }
 
-                // Audit log for order status change
+                // Audit log for order status change (payment_intent -> escrow_hold = order becomes real)
                 AuditHelper::log(
-                    'order.status_changed',
+                    'order.payment_confirmed',
                     Order::class,
                     $order->id,
-                    ['status' => $oldStatus],
+                    ['status' => $oldStatus, 'note' => 'Payment intent - not yet a real order'],
                     [
                         'status' => 'escrow_hold',
                         'paid_at' => $order->paid_at->toIso8601String(),
                         'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                        'note' => 'Order confirmed - payment received, now a real order',
                     ],
                     $request
                 );

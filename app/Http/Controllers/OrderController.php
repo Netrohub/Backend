@@ -19,9 +19,12 @@ class OrderController extends Controller
     {
         $user = $request->user();
         
+        // CRITICAL: Only show REAL orders (exclude payment_intent - those are not orders yet)
+        // payment_intent = temporary, not a real order until payment is confirmed
         $orders = PaginationHelper::paginate(
             Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
                 ->withActiveUsers() // Only show orders from active (non-deleted) users
+                ->where('status', '!=', 'payment_intent') // Exclude payment intents - they're not real orders
                 ->where(function($query) use ($user) {
                     $query->where('buyer_id', $user->id)
                           ->orWhere('seller_id', $user->id);
@@ -59,12 +62,13 @@ class OrderController extends Controller
                 // DO NOT mark listing as sold here - only mark as sold after payment is confirmed
                 // This prevents accounts from being marked as sold if payment fails
                 
+                // Create payment intent (not a real order yet - only becomes order after payment confirmation)
                 return Order::create([
                     'listing_id' => $listing->id,
                     'buyer_id' => $request->user()->id,
                     'seller_id' => $listing->user_id,
                     'amount' => $listing->price,
-                    'status' => 'pending',
+                    'status' => 'payment_intent', // Not a real order until payment is confirmed
                     'notes' => $validated['notes'] ?? null,
                 ]);
             });
@@ -126,6 +130,13 @@ class OrderController extends Controller
         ]);
 
         if (isset($validated['status']) && $validated['status'] === 'cancelled') {
+            // Handle payment_intent cancellation (not a real order yet, just delete it)
+            if ($order->status === 'payment_intent') {
+                // Payment intent was never paid, so just delete it (not a real order)
+                $order->delete();
+                return response()->json(['message' => 'تم إلغاء طلب الدفع'], 200);
+            }
+            
             if ($order->status === 'escrow_hold') {
                 // Refund buyer - wrapped in transaction to prevent race conditions
                 DB::transaction(function () use ($order) {
@@ -150,7 +161,7 @@ class OrderController extends Controller
             $order->status = 'cancelled';
             $order->save();
             
-            // Revert listing back to active if it was marked as sold
+            // Revert listing back to active if it was marked as sold (only for real orders)
             $listing = $order->listing;
             if ($listing && $listing->status === 'sold') {
                 $listing->status = 'active';
@@ -268,7 +279,17 @@ class OrderController extends Controller
             ], 400);
         }
 
-        // Handle refund if in escrow
+        // Handle payment_intent cancellation (not a real order yet, just delete it)
+        if ($order->status === 'payment_intent') {
+            // Payment intent was never paid, so just delete it (not a real order)
+            $order->delete();
+            return response()->json([
+                'message' => 'تم إلغاء طلب الدفع',
+                'order' => null,
+            ], 200);
+        }
+
+        // Handle refund if in escrow (real order)
         if ($order->status === 'escrow_hold') {
             DB::transaction(function () use ($order) {
                 $buyerWallet = Wallet::lockForUpdate()
