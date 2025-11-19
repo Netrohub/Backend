@@ -69,4 +69,9 @@ return [
         'site_key' => env('TURNSTILE_SITE_KEY'),
     ],
 
+    'discord_bot' => [
+        'webhook_url' => env('DISCORD_BOT_WEBHOOK_URL'),
+        'webhook_secret' => env('DISCORD_BOT_WEBHOOK_SECRET'),
+    ],
+
 ];

@@ -12,9 +12,18 @@ use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
+use App\Services\DiscordBotService;
 
 class ListingController extends Controller
 {
+    public function __construct(
+        private ?DiscordBotService $discordBotService = null
+    ) {
+        // Initialize DiscordBotService if not injected (for backward compatibility)
+        if (!$this->discordBotService) {
+            $this->discordBotService = app(DiscordBotService::class);
+        }
+    }
     // Price limits for listings
     const MIN_LISTING_PRICE = 10; // $10 minimum
     const MAX_LISTING_PRICE = 10000; // $10,000 maximum
@@ -232,7 +241,29 @@ class ListingController extends Controller
         // Invalidate listings cache when new listing is created
         Cache::forget('listings_' . md5($category . ''));
 
-        return response()->json($listing->load('user'), 201);
+        // Reload listing with relationships for response
+        $listing->load('user');
+
+        // Send Discord notification (non-blocking, fire and forget)
+        try {
+            $this->discordBotService?->notifyNewListing([
+                'id' => $listing->id,
+                'title' => $listing->title,
+                'description' => $listing->description,
+                'price' => $listing->price,
+                'category' => $listing->category,
+                'images' => $listing->images ?? [],
+                'created_at' => $listing->created_at?->toIso8601String(),
+            ]);
+        } catch (\Exception $e) {
+            // Log error but don't fail the request
+            Log::error('Discord bot notification failed', [
+                'listing_id' => $listing->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($listing, 201);
     }
 
     public function show($id)
