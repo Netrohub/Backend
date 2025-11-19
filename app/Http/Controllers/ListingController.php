@@ -240,7 +240,7 @@ class ListingController extends Controller
         );
 
         // Invalidate listings cache when new listing is created
-        Cache::forget('listings_' . md5($category . ''));
+        Cache::forget('listings_' . md5($listing->category . ''));
 
         // Reload listing with relationships for response
         $listing->load('user');
