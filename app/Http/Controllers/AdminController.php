@@ -733,9 +733,18 @@ class AdminController extends Controller
             // Admin must process the actual bank transfer separately
             
             try {
-                // Release from escrow and update withdrawal status
+                // Calculate net amount (amount after fee deduction)
+                // If net_amount is not set (old records), calculate it
+                $netAmount = $withdrawalRequest->net_amount ?? ($withdrawalRequest->amount - ($withdrawalRequest->fee_amount ?? 0));
+                
+                // Release from escrow (full requested amount was held)
                 $wallet->on_hold_balance -= $withdrawalRequest->amount;
-                $wallet->withdrawn_total += $withdrawalRequest->amount;
+                // Add fee back to available balance (fee stays with platform)
+                if ($withdrawalRequest->fee_amount > 0) {
+                    $wallet->available_balance += $withdrawalRequest->fee_amount;
+                }
+                // Track only net amount in withdrawn_total (what user actually receives)
+                $wallet->withdrawn_total += $netAmount;
                 $wallet->save();
 
                 // Update withdrawal request

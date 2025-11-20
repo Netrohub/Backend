@@ -8,6 +8,7 @@ use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\AuditHelper;
 
@@ -31,6 +32,34 @@ class WalletController extends Controller
         );
 
         return response()->json($wallet);
+    }
+
+    /**
+     * Get withdrawal fee information
+     */
+    public function withdrawalFeeInfo(Request $request)
+    {
+        // Get withdrawal fee percentage (default to platform_fee_percentage if withdrawal_fee_percentage doesn't exist)
+        $withdrawalFeePercentage = Cache::remember('withdrawal_fee_percentage', 3600, function () {
+            $fee = DB::table('settings')
+                ->where('key', 'withdrawal_fee_percentage')
+                ->value('value');
+            
+            // If withdrawal_fee_percentage doesn't exist, use platform_fee_percentage
+            if ($fee === null) {
+                $fee = DB::table('settings')
+                    ->where('key', 'platform_fee_percentage')
+                    ->value('value') ?? 0;
+            }
+            
+            return is_numeric($fee) ? (float)$fee : 0;
+        });
+        
+        return response()->json([
+            'fee_percentage' => $withdrawalFeePercentage,
+            'min_withdrawal' => self::MIN_WITHDRAWAL_AMOUNT,
+            'max_withdrawal' => self::MAX_SINGLE_WITHDRAWAL,
+        ]);
     }
 
     /**
@@ -200,8 +229,39 @@ class WalletController extends Controller
             // Reverse to show newest orders first
             $orderBreakdown = array_reverse($orderBreakdown);
 
+            // Calculate withdrawal fee from settings (cached for 1 hour)
+            $feePercentage = Cache::remember('withdrawal_fee_percentage', 3600, function () {
+                $fee = DB::table('settings')
+                    ->where('key', 'withdrawal_fee_percentage')
+                    ->value('value');
+                
+                // If withdrawal_fee_percentage doesn't exist, use platform_fee_percentage
+                if ($fee === null) {
+                    $fee = DB::table('settings')
+                        ->where('key', 'platform_fee_percentage')
+                        ->value('value') ?? 0;
+                }
+                
+                return is_numeric($fee) ? (float)$fee : 0;
+            });
+            
+            // Calculate fee amount
+            $feeAmount = round($validated['amount'] * ($feePercentage / 100), 2);
+            
+            // Net amount after fee deduction
+            $netAmount = $validated['amount'] - $feeAmount;
+            
+            // Ensure net amount is positive
+            if ($netAmount <= 0) {
+                return response()->json([
+                    'message' => 'المبلغ المطلوب سحبه صغير جداً بعد خصم الرسوم. يرجى زيادة المبلغ.',
+                    'error_code' => 'WITHDRAWAL_AMOUNT_TOO_SMALL_AFTER_FEE',
+                ], 400);
+            }
+
             // Move funds from available_balance to on_hold_balance (hold until admin approval)
             // This ensures funds are reserved but not yet withdrawn
+            // We hold the full requested amount, fee will be deducted when processing
             $wallet->available_balance -= $validated['amount'];
             $wallet->on_hold_balance += $validated['amount'];
             $wallet->save();
@@ -210,7 +270,10 @@ class WalletController extends Controller
             $withdrawalRequest = WithdrawalRequest::create([
                 'user_id' => $request->user()->id,
                 'wallet_id' => $wallet->id,
-                'amount' => $validated['amount'],
+                'amount' => $validated['amount'], // Requested amount (before fee)
+                'fee_amount' => $feeAmount, // Fee amount
+                'fee_percentage' => $feePercentage, // Fee percentage used
+                'net_amount' => $netAmount, // Net amount after fee
                 'iban' => $validated['iban'],
                 'bank_account' => $validated['iban'], // Legacy field for backward compatibility
                 'bank_name' => $validated['bank_name'],
@@ -252,6 +315,12 @@ class WalletController extends Controller
                 'message' => 'تم إرسال طلب السحب بنجاح. سيتم مراجعته من قبل الإدارة قريباً.',
                 'wallet' => $wallet->fresh(),
                 'withdrawal_request' => $withdrawalRequest,
+                'fee_info' => [
+                    'requested_amount' => $validated['amount'],
+                    'fee_percentage' => $feePercentage,
+                    'fee_amount' => $feeAmount,
+                    'net_amount' => $netAmount,
+                ],
             ]);
         });
     }

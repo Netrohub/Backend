@@ -185,6 +185,7 @@ Route::prefix('v1')->group(function () {
         // Wallet (withdrawals require email verification)
         Route::get('/wallet', [WalletController::class, 'index']);
         Route::get('/wallet/withdrawals', [WalletController::class, 'withdrawalHistory']);
+        Route::get('/wallet/fee-info', [WalletController::class, 'withdrawalFeeInfo']);
         
         // Withdrawal endpoint with account-based rate limiting + origin validation
         // SECURITY: Financial operations require strict validation

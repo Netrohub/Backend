@@ -81,6 +81,15 @@ return new class extends Migration
                 'created_at' => now(),
                 'updated_at' => now(),
             ],
+            [
+                'key' => 'withdrawal_fee_percentage',
+                'value' => '5',
+                'type' => 'number',
+                'group' => 'payments',
+                'description' => 'نسبة رسوم السحب (%) - إذا لم يتم تحديدها، سيتم استخدام نسبة عمولة المنصة',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
         ]);
     }
 
