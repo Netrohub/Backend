@@ -180,14 +180,17 @@ class PaylinkClient
     /**
      * Get invoice details by transaction number
      * 
+     * Based on Paylink API response, the checkUrl shows:
+     * https://restpilot.paylink.sa/api/getInvoice/{transactionNo}
+     * So the transaction number should be in the URL path, not body
+     * 
      * @param string $transactionNo Transaction number
      * @return array Invoice details
      */
     public function getInvoice(string $transactionNo): array
     {
-        return $this->request('POST', '/api/getInvoice', [
-            'transactionNo' => $transactionNo,
-        ]);
+        // Transaction number should be in URL path, not body
+        return $this->request('GET', '/api/getInvoice/' . $transactionNo);
     }
 
     /**
