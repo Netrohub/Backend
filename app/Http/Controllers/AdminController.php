@@ -10,8 +10,11 @@ use App\Models\KycVerification;
 use App\Models\Review;
 use App\Models\Suggestion;
 use App\Models\Wallet;
+use App\Models\WithdrawalRequest;
+use App\Services\TapPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
@@ -628,5 +631,258 @@ class AdminController extends Controller
             'kyc.verified' => 'text-blue-400',
         ];
         return $map[$action] ?? 'text-white/60';
+    }
+
+    /**
+     * Get withdrawal requests with filtering
+     */
+    public function withdrawals(Request $request)
+    {
+        $query = WithdrawalRequest::with(['user', 'wallet'])
+            ->orderBy('created_at', 'desc');
+
+        // Filter by status
+        if ($request->has('status') && !empty($request->status)) {
+            $validated = $request->validate([
+                'status' => 'in:pending,processing,completed,failed,cancelled',
+            ]);
+            $query->where('status', $validated['status']);
+        }
+
+        // Filter by date range
+        if ($request->has('from_date')) {
+            $query->whereDate('created_at', '>=', $request->from_date);
+        }
+        if ($request->has('to_date')) {
+            $query->whereDate('created_at', '<=', $request->to_date);
+        }
+
+        // Search by user name or email
+        if ($request->has('search') && !empty($request->search)) {
+            $validated = $request->validate([
+                'search' => 'string|max:255',
+            ]);
+            $search = $validated['search'] ?? '';
+            
+            if (!empty($search)) {
+                $search = str_replace(['%', '_'], ['\%', '\_'], $search);
+                
+                $query->whereHas('user', function($q) use ($search) {
+                    $q->where('name', 'like', '%' . $search . '%')
+                      ->orWhere('email', 'like', '%' . $search . '%');
+                });
+            }
+        }
+
+        $withdrawals = PaginationHelper::paginate(
+            $query,
+            $request
+        );
+
+        return response()->json($withdrawals);
+    }
+
+    /**
+     * Approve withdrawal request (process payment)
+     */
+    public function approveWithdrawal(Request $request, $id)
+    {
+        $withdrawalRequest = WithdrawalRequest::with(['user', 'wallet'])->findOrFail($id);
+
+        // Only approve pending withdrawals
+        if ($withdrawalRequest->status !== WithdrawalRequest::STATUS_PENDING) {
+            return response()->json([
+                'message' => 'لا يمكن الموافقة على هذا الطلب. حالة الطلب: ' . $withdrawalRequest->status,
+                'error_code' => 'INVALID_WITHDRAWAL_STATUS',
+            ], 400);
+        }
+
+        // Process withdrawal via Tap Payments
+        return DB::transaction(function () use ($withdrawalRequest, $request) {
+            $wallet = Wallet::lockForUpdate()->findOrFail($withdrawalRequest->wallet_id);
+            
+            // Validate escrow balance
+            if ($wallet->on_hold_balance < $withdrawalRequest->amount) {
+                Log::error('Insufficient escrow balance for withdrawal approval', [
+                    'withdrawal_request_id' => $withdrawalRequest->id,
+                    'required' => $withdrawalRequest->amount,
+                    'available' => $wallet->on_hold_balance,
+                ]);
+                return response()->json([
+                    'message' => 'رصيد المستخدم غير كافٍ للموافقة على السحب',
+                    'error_code' => 'INSUFFICIENT_ESCROW_BALANCE',
+                ], 400);
+            }
+
+            // Initiate transfer via Tap Payments API
+            $tapService = app(TapPaymentService::class);
+            
+            try {
+                $transferData = [
+                    'amount' => $withdrawalRequest->amount,
+                    'currency' => 'SAR',
+                    'destination' => [
+                        'type' => 'bank_account',
+                        'bank_account' => $withdrawalRequest->iban ?? $withdrawalRequest->bank_account,
+                        'bank_name' => $withdrawalRequest->bank_name,
+                        'account_holder_name' => $withdrawalRequest->account_holder_name,
+                    ],
+                    'metadata' => [
+                        'withdrawal_request_id' => $withdrawalRequest->id,
+                        'user_id' => $withdrawalRequest->user_id,
+                        'approved_by_admin_id' => $request->user()->id,
+                    ],
+                ];
+
+                $tapResponse = $tapService->createTransfer($transferData);
+
+                if (isset($tapResponse['id'])) {
+                    // Release from escrow and update withdrawal status
+                    $wallet->on_hold_balance -= $withdrawalRequest->amount;
+                    $wallet->withdrawn_total += $withdrawalRequest->amount;
+                    $wallet->save();
+
+                    // Update withdrawal request
+                    $oldStatus = $withdrawalRequest->status;
+                    $withdrawalRequest->status = WithdrawalRequest::STATUS_PROCESSING;
+                    $withdrawalRequest->tap_transfer_id = $tapResponse['id'];
+                    $withdrawalRequest->tap_response = $tapResponse;
+                    $withdrawalRequest->processed_at = now();
+                    $withdrawalRequest->save();
+
+                    // Audit log
+                    AuditHelper::log(
+                        'admin.withdrawal.approved',
+                        WithdrawalRequest::class,
+                        $withdrawalRequest->id,
+                        ['status' => $oldStatus],
+                        [
+                            'status' => WithdrawalRequest::STATUS_PROCESSING,
+                            'tap_transfer_id' => $tapResponse['id'],
+                            'approved_by' => $request->user()->id,
+                        ],
+                        $request
+                    );
+
+                    Log::info('Withdrawal approved and transfer initiated by admin', [
+                        'withdrawal_request_id' => $withdrawalRequest->id,
+                        'tap_transfer_id' => $tapResponse['id'],
+                        'admin_id' => $request->user()->id,
+                        'amount' => $withdrawalRequest->amount,
+                    ]);
+
+                    // Notify user of approval
+                    $withdrawalRequest->user->notify(new \App\Notifications\WithdrawalApproved($withdrawalRequest));
+
+                    return response()->json([
+                        'message' => 'تم الموافقة على طلب السحب وتم بدء عملية التحويل',
+                        'withdrawal_request' => $withdrawalRequest->fresh(['user', 'wallet']),
+                    ]);
+                } else {
+                    // If Tap API call fails, keep status as pending
+                    $withdrawalRequest->tap_response = $tapResponse;
+                    $withdrawalRequest->failure_reason = 'Failed to create transfer with payment gateway';
+                    $withdrawalRequest->save();
+
+                    Log::error('Withdrawal approval failed - Tap API error', [
+                        'withdrawal_request_id' => $withdrawalRequest->id,
+                        'tap_response' => $tapResponse,
+                        'admin_id' => $request->user()->id,
+                    ]);
+
+                    return response()->json([
+                        'message' => 'فشل بدء عملية التحويل. يرجى المحاولة مرة أخرى أو مراجعة تفاصيل الحساب البنكي.',
+                        'error_code' => 'TRANSFER_INITIATION_FAILED',
+                        'withdrawal_request' => $withdrawalRequest->fresh(['user', 'wallet']),
+                    ], 500);
+                }
+            } catch (\Exception $e) {
+                Log::error('Withdrawal approval exception', [
+                    'withdrawal_request_id' => $withdrawalRequest->id,
+                    'error' => $e->getMessage(),
+                    'admin_id' => $request->user()->id,
+                    'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+                ]);
+
+                return response()->json([
+                    'message' => 'حدث خطأ أثناء معالجة السحب: ' . $e->getMessage(),
+                    'error_code' => 'WITHDRAWAL_APPROVAL_EXCEPTION',
+                ], 500);
+            }
+        });
+    }
+
+    /**
+     * Reject withdrawal request (refund to user)
+     */
+    public function rejectWithdrawal(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $withdrawalRequest = WithdrawalRequest::with(['user', 'wallet'])->findOrFail($id);
+
+        // Only reject pending withdrawals
+        if ($withdrawalRequest->status !== WithdrawalRequest::STATUS_PENDING) {
+            return response()->json([
+                'message' => 'لا يمكن رفض هذا الطلب. حالة الطلب: ' . $withdrawalRequest->status,
+                'error_code' => 'INVALID_WITHDRAWAL_STATUS',
+            ], 400);
+        }
+
+        return DB::transaction(function () use ($withdrawalRequest, $validated, $request) {
+            $wallet = Wallet::lockForUpdate()->findOrFail($withdrawalRequest->wallet_id);
+            
+            // Validate escrow balance
+            if ($wallet->on_hold_balance < $withdrawalRequest->amount) {
+                Log::error('Insufficient escrow balance for withdrawal rejection', [
+                    'withdrawal_request_id' => $withdrawalRequest->id,
+                    'required' => $withdrawalRequest->amount,
+                    'available' => $wallet->on_hold_balance,
+                ]);
+            } else {
+                // Refund to available balance
+                $wallet->on_hold_balance -= $withdrawalRequest->amount;
+                $wallet->available_balance += $withdrawalRequest->amount;
+                $wallet->save();
+            }
+
+            // Update withdrawal request
+            $oldStatus = $withdrawalRequest->status;
+            $withdrawalRequest->status = WithdrawalRequest::STATUS_FAILED;
+            $withdrawalRequest->failure_reason = $validated['reason'];
+            $withdrawalRequest->processed_at = now();
+            $withdrawalRequest->save();
+
+            // Audit log
+            AuditHelper::log(
+                'admin.withdrawal.rejected',
+                WithdrawalRequest::class,
+                $withdrawalRequest->id,
+                ['status' => $oldStatus],
+                [
+                    'status' => WithdrawalRequest::STATUS_FAILED,
+                    'failure_reason' => $validated['reason'],
+                    'rejected_by' => $request->user()->id,
+                ],
+                $request
+            );
+
+            Log::info('Withdrawal rejected by admin', [
+                'withdrawal_request_id' => $withdrawalRequest->id,
+                'reason' => $validated['reason'],
+                'admin_id' => $request->user()->id,
+                'amount' => $withdrawalRequest->amount,
+            ]);
+
+            // Notify user of rejection
+            $withdrawalRequest->user->notify(new \App\Notifications\WithdrawalRejected($withdrawalRequest, $validated['reason']));
+
+            return response()->json([
+                'message' => 'تم رفض طلب السحب وإعادة المبلغ إلى رصيد المستخدم',
+                'withdrawal_request' => $withdrawalRequest->fresh(['user', 'wallet']),
+            ]);
+        });
     }
 }

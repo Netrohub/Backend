@@ -9,6 +9,7 @@ use App\Models\Wallet;
 use App\Notifications\OrderStatusChanged;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
@@ -226,15 +227,37 @@ class OrderController extends Controller
             ], 400);
         }
 
-        // Release funds to seller
+        // Release funds to seller - MUST release from buyer's escrow first
         DB::transaction(function () use ($order, $user) {
+            // Get buyer wallet with lock to release escrow
+            $buyerWallet = Wallet::lockForUpdate()
+                ->firstOrCreate(
+                    ['user_id' => $order->buyer_id],
+                    ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                );
+
+            // Validate buyer has enough escrow balance
+            if ($buyerWallet->on_hold_balance < $order->amount) {
+                Log::error('Insufficient escrow balance for order confirmation', [
+                    'order_id' => $order->id,
+                    'buyer_id' => $order->buyer_id,
+                    'required' => $order->amount,
+                    'available' => $buyerWallet->on_hold_balance,
+                ]);
+                throw new \Exception('Insufficient escrow balance. Order requires manual review.');
+            }
+
+            // Release from buyer's escrow FIRST
+            $buyerWallet->on_hold_balance -= $order->amount;
+            $buyerWallet->save();
+
+            // Then add to seller's available balance
             $sellerWallet = Wallet::lockForUpdate()
                 ->firstOrCreate(
                     ['user_id' => $order->seller_id],
                     ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                 );
 
-            // Transfer from escrow (on_hold) to seller's available balance
             $sellerWallet->available_balance += $order->amount;
             $sellerWallet->save();
 

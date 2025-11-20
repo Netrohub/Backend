@@ -14,11 +14,15 @@ class WithdrawalRequest extends Model
         'user_id',
         'wallet_id',
         'amount',
-        'bank_account',
+        'bank_account', // Legacy field (kept for backward compatibility)
+        'iban', // IBAN (primary field)
+        'bank_name',
+        'account_holder_name',
         'status',
         'tap_transfer_id',
         'failure_reason',
         'tap_response',
+        'order_breakdown', // JSON array of contributing orders
         'processed_at',
     ];
 
@@ -27,6 +31,7 @@ class WithdrawalRequest extends Model
         return [
             'amount' => 'decimal:2',
             'tap_response' => 'array',
+            'order_breakdown' => 'array',
             'processed_at' => 'datetime',
         ];
     }

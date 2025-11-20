@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
-use App\Services\TapPaymentService;
+use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -18,10 +18,6 @@ class WalletController extends Controller
     const MAX_SINGLE_WITHDRAWAL = 2000; // $2,000 per transaction
     const DAILY_WITHDRAWAL_LIMIT = 5000; // $5,000 per day
     const HOURLY_WITHDRAWAL_LIMIT = 3; // 3 withdrawals per hour
-
-    public function __construct(
-        private TapPaymentService $tapService
-    ) {}
     
     public function index(Request $request)
     {
@@ -50,8 +46,11 @@ class WalletController extends Controller
                 return [
                     'id' => $withdrawal->id,
                     'amount' => $withdrawal->amount,
-                    'bank_account' => $this->maskBankAccount($withdrawal->bank_account),
-                    'bank_account_full' => $withdrawal->bank_account, // For display in details
+                    'iban' => $this->maskBankAccount($withdrawal->iban ?? $withdrawal->bank_account ?? ''),
+                    'iban_full' => $withdrawal->iban ?? $withdrawal->bank_account ?? '', // For display in details
+                    'bank_account' => $this->maskBankAccount($withdrawal->bank_account ?? $withdrawal->iban ?? ''), // Legacy field for backward compatibility
+                    'bank_name' => $withdrawal->bank_name,
+                    'account_holder_name' => $withdrawal->account_holder_name,
                     'status' => $withdrawal->status,
                     'tap_transfer_id' => $withdrawal->tap_transfer_id,
                     'failure_reason' => $withdrawal->failure_reason,
@@ -84,15 +83,28 @@ class WalletController extends Controller
                 'min:' . self::MIN_WITHDRAWAL_AMOUNT,
                 'max:' . self::MAX_SINGLE_WITHDRAWAL,
             ],
-            'bank_account' => [
+            'iban' => [
                 'required',
                 'string',
                 'regex:/^SA\d{22}$/', // Saudi IBAN format
             ],
+            'bank_name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
+            'account_holder_name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
         ], [
             'amount.min' => 'الحد الأدنى للسحب هو $' . self::MIN_WITHDRAWAL_AMOUNT,
             'amount.max' => 'الحد الأقصى للسحب هو $' . self::MAX_SINGLE_WITHDRAWAL . ' لكل عملية',
-            'bank_account.regex' => 'رقم الحساب البنكي يجب أن يكون بصيغة IBAN السعودي (SA + 22 رقم)',
+            'iban.required' => 'رقم الآيبان مطلوب',
+            'iban.regex' => 'رقم الآيبان يجب أن يكون بصيغة IBAN السعودي (SA + 22 رقم)',
+            'bank_name.required' => 'اسم البنك مطلوب',
+            'account_holder_name.required' => 'اسم صاحب الحساب مطلوب',
         ]);
 
         // Check hourly withdrawal limit (additional protection beyond rate limiting)
@@ -149,126 +161,95 @@ class WalletController extends Controller
                 return response()->json(['message' => MessageHelper::WALLET_INSUFFICIENT_BALANCE], 400);
             }
 
-            // Deduct from available balance
+            // Calculate order breakdown - which orders contributed to this withdrawal
+            // Get user's completed orders (where they were seller) ordered by completion date
+            $completedOrders = Order::where('seller_id', $request->user()->id)
+                ->where('status', 'completed')
+                ->whereNotNull('completed_at')
+                ->orderBy('completed_at', 'desc')
+                ->with('listing')
+                ->get();
+
+            // Calculate order breakdown by matching withdrawal amount against completed orders
+            // We'll allocate funds starting from most recent orders
+            $orderBreakdown = [];
+            $remainingAmount = $validated['amount'];
+            
+            foreach ($completedOrders as $order) {
+                if ($remainingAmount <= 0) {
+                    break;
+                }
+                
+                // Check if this order hasn't been fully allocated to previous withdrawals
+                // For simplicity, we'll use a FIFO approach: allocate from oldest to newest
+                // But for display, we'll show newest first
+                $allocatedAmount = min((float)$order->amount, $remainingAmount);
+                
+                if ($allocatedAmount > 0) {
+                    $orderBreakdown[] = [
+                        'order_id' => $order->id,
+                        'order_number' => 'NXO-' . $order->id,
+                        'amount' => round($allocatedAmount, 2),
+                        'listing_title' => $order->listing->title ?? 'N/A',
+                        'completed_at' => $order->completed_at ? $order->completed_at->toIso8601String() : null,
+                    ];
+                    $remainingAmount -= $allocatedAmount;
+                }
+            }
+            
+            // Reverse to show newest orders first
+            $orderBreakdown = array_reverse($orderBreakdown);
+
+            // Move funds from available_balance to on_hold_balance (hold until admin approval)
+            // This ensures funds are reserved but not yet withdrawn
             $wallet->available_balance -= $validated['amount'];
-            $wallet->withdrawn_total += $validated['amount'];
+            $wallet->on_hold_balance += $validated['amount'];
             $wallet->save();
 
-            // Create withdrawal request record
+            // Create withdrawal request record - status will be pending for admin approval
             $withdrawalRequest = WithdrawalRequest::create([
                 'user_id' => $request->user()->id,
                 'wallet_id' => $wallet->id,
                 'amount' => $validated['amount'],
-                'bank_account' => $validated['bank_account'],
-                'status' => WithdrawalRequest::STATUS_PENDING,
+                'iban' => $validated['iban'],
+                'bank_account' => $validated['iban'], // Legacy field for backward compatibility
+                'bank_name' => $validated['bank_name'],
+                'account_holder_name' => $validated['account_holder_name'],
+                'order_breakdown' => $orderBreakdown, // Store order breakdown
+                'status' => WithdrawalRequest::STATUS_PENDING, // Pending admin approval
             ]);
 
-            // Initiate transfer via Tap Payments API
-            try {
-                $transferData = [
+            // Audit log for withdrawal request creation
+            AuditHelper::log(
+                'wallet.withdraw.requested',
+                WithdrawalRequest::class,
+                $withdrawalRequest->id,
+                null,
+                [
                     'amount' => $validated['amount'],
-                    'currency' => 'SAR',
-                    'destination' => [
-                        'type' => 'bank_account',
-                        'bank_account' => $validated['bank_account'],
-                    ],
-                    'metadata' => [
-                        'withdrawal_request_id' => $withdrawalRequest->id,
-                        'user_id' => $request->user()->id,
-                    ],
-                ];
+                    'iban' => substr($validated['iban'], 0, 4) . '****', // Mask sensitive data
+                    'bank_name' => $validated['bank_name'],
+                    'account_holder_name' => $validated['account_holder_name'],
+                    'status' => WithdrawalRequest::STATUS_PENDING,
+                    'note' => 'Withdrawal request submitted - awaiting admin approval',
+                ],
+                $request
+            );
 
-                $tapResponse = $this->tapService->createTransfer($transferData);
+            Log::info('Withdrawal request created - awaiting admin approval', [
+                'withdrawal_request_id' => $withdrawalRequest->id,
+                'user_id' => $request->user()->id,
+                'amount' => $validated['amount'],
+            ]);
 
-                if (isset($tapResponse['id'])) {
-                    // Update withdrawal request with Tap transfer ID
-                    $withdrawalRequest->tap_transfer_id = $tapResponse['id'];
-                    $withdrawalRequest->status = WithdrawalRequest::STATUS_PROCESSING;
-                    $withdrawalRequest->tap_response = $tapResponse;
-                    $withdrawalRequest->save();
-
-                    Log::info('Withdrawal transfer initiated', [
-                        'withdrawal_request_id' => $withdrawalRequest->id,
-                        'tap_transfer_id' => $tapResponse['id'],
-                        'amount' => $validated['amount'],
-                    ]);
-
-                    // Audit log for withdrawal
-                    AuditHelper::log(
-                        'wallet.withdraw',
-                        WithdrawalRequest::class,
-                        $withdrawalRequest->id,
-                        null,
-                        [
-                            'amount' => $validated['amount'],
-                            'bank_account' => substr($validated['bank_account'], 0, 4) . '****', // Mask sensitive data
-                            'status' => WithdrawalRequest::STATUS_PROCESSING,
-                            'tap_transfer_id' => $tapResponse['id'],
-                        ],
-                        $request
-                    );
-                } else {
-                    // If Tap API call fails, mark as failed and refund wallet
-                    $withdrawalRequest->status = WithdrawalRequest::STATUS_FAILED;
-                    $withdrawalRequest->failure_reason = 'Failed to create transfer with payment gateway';
-                    $withdrawalRequest->tap_response = $tapResponse;
-                    $withdrawalRequest->save();
-
-                    // Refund the wallet balance
-                    $wallet->available_balance += $validated['amount'];
-                    $wallet->withdrawn_total -= $validated['amount'];
-                    $wallet->save();
-
-                    Log::error('Withdrawal transfer failed', [
-                        'withdrawal_request_id' => $withdrawalRequest->id,
-                        'tap_response' => $tapResponse,
-                    ]);
-
-                    return response()->json([
-                        'message' => 'Failed to initiate withdrawal. Please try again or contact support.',
-                        'withdrawal_request' => $withdrawalRequest,
-                    ], 500);
-                }
-            } catch (\Exception $e) {
-                // If exception occurs, mark as failed and refund wallet
-                $withdrawalRequest->status = WithdrawalRequest::STATUS_FAILED;
-                $withdrawalRequest->failure_reason = 'Exception: ' . $e->getMessage();
-                $withdrawalRequest->save();
-
-                // Refund the wallet balance
-                $wallet->available_balance += $validated['amount'];
-                $wallet->withdrawn_total -= $validated['amount'];
-                $wallet->save();
-
-                // Determine error code and user-friendly message
-                $errorCode = 'WITHDRAWAL_FAILED';
-                $userMessage = 'An error occurred while processing withdrawal. Your balance has been refunded.';
-                
-                if (str_contains($e->getMessage(), 'network') || str_contains($e->getMessage(), 'timeout')) {
-                    $errorCode = 'WITHDRAWAL_NETWORK_ERROR';
-                    $userMessage = 'Unable to connect to payment gateway. Your balance has been refunded. Please try again later.';
-                } elseif (str_contains($e->getMessage(), 'invalid') || str_contains($e->getMessage(), 'bank_account')) {
-                    $errorCode = 'WITHDRAWAL_INVALID_ACCOUNT';
-                    $userMessage = 'Invalid bank account information. Your balance has been refunded. Please check your account details.';
-                }
-
-                Log::error('Withdrawal transfer exception', [
-                    'withdrawal_request_id' => $withdrawalRequest->id,
-                    'error' => $e->getMessage(),
-                    'error_code' => $errorCode,
-                    'trace' => config('app.debug') ? $e->getTraceAsString() : null,
-                ]);
-
-                return response()->json([
-                    'message' => $userMessage,
-                    'error_code' => $errorCode,
-                    'withdrawal_request' => $withdrawalRequest,
-                    'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
-                ], 500);
-            }
+            // Notify admin of new withdrawal request (optional - can be added later)
+            // $adminUsers = User::where('role', 'admin')->get();
+            // foreach ($adminUsers as $admin) {
+            //     $admin->notify(new NewWithdrawalRequest($withdrawalRequest));
+            // }
 
             return response()->json([
-                'message' => MessageHelper::WALLET_WITHDRAWAL_SUBMITTED,
+                'message' => 'تم إرسال طلب السحب بنجاح. سيتم مراجعته من قبل الإدارة قريباً.',
                 'wallet' => $wallet->fresh(),
                 'withdrawal_request' => $withdrawalRequest,
             ]);

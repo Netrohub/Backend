@@ -273,6 +273,11 @@ Route::prefix('v1')->group(function () {
                 // Suggestion management
                 Route::put('/suggestions/{id}', [AdminController::class, 'updateSuggestion']);
                 Route::delete('/suggestions/{id}', [AdminController::class, 'deleteSuggestion']);
+                
+                // Withdrawal management (manual approval)
+                Route::get('/withdrawals', [AdminController::class, 'withdrawals']);
+                Route::post('/withdrawals/{id}/approve', [AdminController::class, 'approveWithdrawal']);
+                Route::post('/withdrawals/{id}/reject', [AdminController::class, 'rejectWithdrawal']);
             });
         });
     });
