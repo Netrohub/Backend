@@ -794,6 +794,153 @@ class AdminController extends Controller
     /**
      * Reject withdrawal request (refund to user)
      */
+    /**
+     * Get financial metrics and transaction history
+     */
+    public function financial(Request $request)
+    {
+        try {
+            $now = now();
+            $lastMonth = now()->subMonth();
+            
+            // Helper function for safe growth calculation
+            $calculateGrowth = function ($current, $previous) {
+                if ($previous == 0) {
+                    return $current > 0 ? 100 : 0;
+                }
+                return (($current - $previous) / $previous) * 100;
+            };
+            
+            // Total Revenue: Sum of all completed orders (all time)
+            $totalRevenue = (float) Order::where('status', 'completed')
+                ->sum('amount') ?? 0;
+            
+            // Current month revenue
+            $currentMonthRevenue = (float) Order::where('status', 'completed')
+                ->whereMonth('created_at', $now->month)
+                ->whereYear('created_at', $now->year)
+                ->sum('amount') ?? 0;
+            
+            // Last month revenue
+            $lastMonthRevenue = (float) Order::where('status', 'completed')
+                ->whereMonth('created_at', $lastMonth->month)
+                ->whereYear('created_at', $lastMonth->year)
+                ->sum('amount') ?? 0;
+            
+            $revenueGrowth = $calculateGrowth($currentMonthRevenue, $lastMonthRevenue);
+            
+            // Commissions: Check if platform fee exists, otherwise calculate as 0
+            // For now, we'll use 0% commission (can be updated when commission system is implemented)
+            $platformFeePercentage = 0; // TODO: Get from settings when commission system is active
+            $totalCommissions = $totalRevenue * ($platformFeePercentage / 100);
+            $currentMonthCommissions = $currentMonthRevenue * ($platformFeePercentage / 100);
+            $lastMonthCommissions = $lastMonthRevenue * ($platformFeePercentage / 100);
+            $commissionsGrowth = $calculateGrowth($currentMonthCommissions, $lastMonthCommissions);
+            
+            // Pending Payments: Sum of orders in escrow_hold status
+            $pendingPayments = (float) Order::where('status', 'escrow_hold')
+                ->sum('amount') ?? 0;
+            
+            // Total Withdrawals: Sum of approved/processing/completed withdrawals
+            $totalWithdrawals = (float) WithdrawalRequest::whereIn('status', [
+                WithdrawalRequest::STATUS_PROCESSING,
+                WithdrawalRequest::STATUS_COMPLETED
+            ])->sum('amount') ?? 0;
+            
+            // Current month withdrawals
+            $currentMonthWithdrawals = (float) WithdrawalRequest::whereIn('status', [
+                WithdrawalRequest::STATUS_PROCESSING,
+                WithdrawalRequest::STATUS_COMPLETED
+            ])
+                ->whereMonth('created_at', $now->month)
+                ->whereYear('created_at', $now->year)
+                ->sum('amount') ?? 0;
+            
+            // Last month withdrawals
+            $lastMonthWithdrawals = (float) WithdrawalRequest::whereIn('status', [
+                WithdrawalRequest::STATUS_PROCESSING,
+                WithdrawalRequest::STATUS_COMPLETED
+            ])
+                ->whereMonth('created_at', $lastMonth->month)
+                ->whereYear('created_at', $lastMonth->year)
+                ->sum('amount') ?? 0;
+            
+            $withdrawalsGrowth = $calculateGrowth($currentMonthWithdrawals, $lastMonthWithdrawals);
+            
+            // Recent Transactions: Last 50 transactions (orders and withdrawals)
+            $recentOrders = Order::with(['buyer', 'seller', 'listing'])
+                ->where('status', '!=', 'payment_intent')
+                ->orderBy('created_at', 'desc')
+                ->limit(25)
+                ->get()
+                ->map(function ($order) {
+                    return [
+                        'id' => 'order_' . $order->id,
+                        'type' => 'order',
+                        'amount' => (float) $order->amount,
+                        'order_id' => $order->id,
+                        'order_number' => 'NXO-' . $order->id,
+                        'buyer' => $order->buyer ? $order->buyer->name : 'Unknown',
+                        'seller' => $order->seller ? $order->seller->name : 'Unknown',
+                        'listing_title' => $order->listing ? $order->listing->title : 'N/A',
+                        'status' => $order->status,
+                        'date' => $order->created_at->toIso8601String(),
+                    ];
+                });
+            
+            $recentWithdrawals = WithdrawalRequest::with('user')
+                ->orderBy('created_at', 'desc')
+                ->limit(25)
+                ->get()
+                ->map(function ($withdrawal) {
+                    return [
+                        'id' => 'withdrawal_' . $withdrawal->id,
+                        'type' => 'withdrawal',
+                        'amount' => (float) $withdrawal->amount,
+                        'user' => $withdrawal->user ? $withdrawal->user->name : 'Unknown',
+                        'status' => $withdrawal->status,
+                        'date' => $withdrawal->created_at->toIso8601String(),
+                    ];
+                });
+            
+            // Combine and sort by date
+            $recentTransactions = $recentOrders->concat($recentWithdrawals)
+                ->sortByDesc('date')
+                ->values()
+                ->take(50);
+            
+            return response()->json([
+                'stats' => [
+                    'total_revenue' => round($totalRevenue, 2),
+                    'revenue_growth' => round($revenueGrowth, 1),
+                    'total_commissions' => round($totalCommissions, 2),
+                    'commissions_growth' => round($commissionsGrowth, 1),
+                    'pending_payments' => round($pendingPayments, 2),
+                    'total_withdrawals' => round($totalWithdrawals, 2),
+                    'withdrawals_growth' => round($withdrawalsGrowth, 1),
+                ],
+                'transactions' => $recentTransactions,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin financial error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'stats' => [
+                    'total_revenue' => 0,
+                    'revenue_growth' => 0,
+                    'total_commissions' => 0,
+                    'commissions_growth' => 0,
+                    'pending_payments' => 0,
+                    'total_withdrawals' => 0,
+                    'withdrawals_growth' => 0,
+                ],
+                'transactions' => [],
+            ], 500);
+        }
+    }
+
     public function rejectWithdrawal(Request $request, $id)
     {
         $validated = $request->validate([

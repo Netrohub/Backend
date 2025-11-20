@@ -245,6 +245,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/disputes', [AdminController::class, 'disputes']);
             Route::get('/kyc', [AdminController::class, 'kyc']);
             Route::get('/reviews', [AdminController::class, 'reviews']);
+            Route::get('/financial', [AdminController::class, 'financial']);
             Route::get('/settings', [SettingsController::class, 'index']);
             
             // Write operations (rate limiting for safety)
