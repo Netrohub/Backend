@@ -151,25 +151,27 @@ class PaymentController extends Controller
             ]);
 
             // Get payment URL from addInvoice response
-            // Paylink addInvoice response should contain the payment URL directly
-            // Try multiple possible field names based on Paylink API
+            // Paylink addInvoice response contains the payment URL directly in 'url' field
+            // Format: https://paymentpilot.paylink.sa/pay/info/{transactionNo} (sandbox)
+            // or: https://paylink.sa/pay/info/{transactionNo} (production)
             $paymentUrl = $paylinkResponse['url'] 
-                ?? $paylinkResponse['invoiceUrl'] 
-                ?? $paylinkResponse['paymentUrl'] 
-                ?? $paylinkResponse['link'] 
-                ?? $paylinkResponse['paymentLink']
+                ?? $paylinkResponse['mobileUrl'] 
                 ?? null;
             
-            // If URL not found in response, construct it manually
-            // Paylink payment URL format: https://paylink.sa/pay/{transactionNo}
-            // Both sandbox and production use paylink.sa domain for payment pages
+            // If URL not found in response, construct it manually based on environment
             if (!$paymentUrl && isset($paylinkResponse['transactionNo'])) {
-                // Paylink payment URL is always https://paylink.sa/pay/{transactionNo}
-                // regardless of API environment (sandbox or production)
-                $paymentUrl = 'https://paylink.sa/pay/' . $paylinkResponse['transactionNo'];
+                $baseUrl = config('services.paylink.base_url', 'https://restpilot.paylink.sa');
+                
+                // Use paymentpilot for sandbox, paylink.sa for production
+                if (str_contains($baseUrl, 'restpilot')) {
+                    $paymentUrl = 'https://paymentpilot.paylink.sa/pay/info/' . $paylinkResponse['transactionNo'];
+                } else {
+                    $paymentUrl = 'https://paylink.sa/pay/info/' . $paylinkResponse['transactionNo'];
+                }
                 
                 Log::info('Constructed Paylink payment URL', [
                     'transaction_no' => $paylinkResponse['transactionNo'],
+                    'base_url' => $baseUrl,
                     'constructed_url' => $paymentUrl,
                 ]);
             }
@@ -177,9 +179,13 @@ class PaymentController extends Controller
             if (!$paymentUrl) {
                 Log::error('Payment URL not found in Paylink response', [
                     'transaction_no' => $paylinkResponse['transactionNo'] ?? null,
-                    'response' => $paylinkResponse,
+                    'response_keys' => array_keys($paylinkResponse),
                 ]);
-                // Still return - frontend can handle missing URL
+            } else {
+                Log::info('Payment URL extracted from Paylink response', [
+                    'transaction_no' => $paylinkResponse['transactionNo'] ?? null,
+                    'payment_url' => $paymentUrl,
+                ]);
             }
 
             return response()->json([
