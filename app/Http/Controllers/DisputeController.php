@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Dispute;
 use App\Models\Order;
 use App\Models\Wallet;
+use App\Notifications\DisputeResolved;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
