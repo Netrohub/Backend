@@ -543,17 +543,31 @@ class AuthController extends Controller
      */
     public function sendVerificationEmail(Request $request)
     {
-        if ($request->user()->hasVerifiedEmail()) {
+        try {
+            if ($request->user()->hasVerifiedEmail()) {
+                return response()->json([
+                    'message' => 'البريد الإلكتروني موثق بالفعل'
+                ], 400);
+            }
+
+            $request->user()->sendEmailVerificationNotification();
+
             return response()->json([
-                'message' => 'البريد الإلكتروني موثق بالفعل'
-            ], 400);
+                'message' => 'تم إرسال رسالة التحقق إلى بريدك الإلكتروني'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Email verification send error: ' . $e->getMessage(), [
+                'user_id' => $request->user()->id,
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return response()->json([
+                'message' => 'فشل إرسال رسالة التحقق. يرجى المحاولة مرة أخرى لاحقاً.',
+                'error' => config('app.debug') ? $e->getMessage() : null
+            ], 500);
         }
-
-        $request->user()->sendEmailVerificationNotification();
-
-        return response()->json([
-            'message' => 'تم إرسال رسالة التحقق إلى بريدك الإلكتروني'
-        ]);
     }
 
     /**

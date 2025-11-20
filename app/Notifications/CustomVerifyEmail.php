@@ -13,29 +13,48 @@ class CustomVerifyEmail extends VerifyEmail
      */
     protected function verificationUrl($notifiable)
     {
-        // Generate a signed URL that expires in 60 minutes
-        $backendUrl = URL::temporarySignedRoute(
-            'verification.verify',
-            now()->addMinutes(60),
-            [
+        try {
+            // Generate a signed URL that expires in 60 minutes
+            $backendUrl = URL::temporarySignedRoute(
+                'verification.verify',
+                now()->addMinutes(60),
+                [
+                    'id' => $notifiable->getKey(),
+                    'hash' => sha1($notifiable->getEmailForVerification()),
+                ]
+            );
+
+            // Extract the signature and expiration from backend URL
+            $parsedUrl = parse_url($backendUrl);
+            if (!$parsedUrl || !isset($parsedUrl['query'])) {
+                throw new \Exception('Invalid backend URL generated');
+            }
+
+            parse_str($parsedUrl['query'], $queryParams);
+
+            // Get frontend URL from config
+            $frontendUrl = config('app.frontend_url');
+            if (empty($frontendUrl)) {
+                // Fallback to APP_URL if frontend_url is not set
+                $frontendUrl = config('app.url');
+            }
+
+            // Build frontend URL with verification parameters
+            $verificationUrl = rtrim($frontendUrl, '/') . '/verify-email?' . http_build_query([
                 'id' => $notifiable->getKey(),
                 'hash' => sha1($notifiable->getEmailForVerification()),
-            ]
-        );
+                'expires' => $queryParams['expires'] ?? '',
+                'signature' => $queryParams['signature'] ?? '',
+            ]);
 
-        // Extract the signature and expiration from backend URL
-        $parsedUrl = parse_url($backendUrl);
-        parse_str($parsedUrl['query'] ?? '', $queryParams);
-
-        // Build frontend URL with verification parameters
-        $frontendUrl = config('app.frontend_url') . '/verify-email?' . http_build_query([
-            'id' => $notifiable->getKey(),
-            'hash' => sha1($notifiable->getEmailForVerification()),
-            'expires' => $queryParams['expires'] ?? '',
-            'signature' => $queryParams['signature'] ?? '',
-        ]);
-
-        return $frontendUrl;
+            return $verificationUrl;
+        } catch (\Exception $e) {
+            \Log::error('Error generating verification URL: ' . $e->getMessage(), [
+                'user_id' => $notifiable->getKey(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
+        }
     }
 
     /**
