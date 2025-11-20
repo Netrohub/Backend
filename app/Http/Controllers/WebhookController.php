@@ -367,11 +367,31 @@ class WebhookController extends Controller
                                 ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                             );
 
+                        // CRITICAL: Log wallet state before processing to track any anomalies
+                        $walletBefore = [
+                            'available_balance' => $buyerWallet->available_balance,
+                            'on_hold_balance' => $buyerWallet->on_hold_balance,
+                        ];
+
                         // Payment comes from Paylink (external payment gateway)
                         // Since payment is already collected externally, we directly credit escrow
                         // The funds never enter available_balance - they go straight to escrow for protection
+                        // CRITICAL: NEVER add to available_balance for buyer payments - only escrow!
                         $buyerWallet->on_hold_balance += $order->amount;
                         $buyerWallet->save();
+
+                        // Log wallet state after processing for audit trail
+                        Log::info('Paylink Webhook: Buyer wallet updated', [
+                            'order_id' => $order->id,
+                            'buyer_id' => $order->buyer_id,
+                            'amount' => $order->amount,
+                            'wallet_before' => $walletBefore,
+                            'wallet_after' => [
+                                'available_balance' => $buyerWallet->available_balance,
+                                'on_hold_balance' => $buyerWallet->on_hold_balance,
+                            ],
+                            'note' => 'Payment added to escrow (on_hold_balance) - NOT available_balance',
+                        ]);
 
                         // CRITICAL: This is when the order becomes REAL (changes from payment_intent to escrow_hold)
                         // payment_intent = temporary, not a real order

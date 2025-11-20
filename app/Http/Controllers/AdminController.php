@@ -558,14 +558,10 @@ class AdminController extends Controller
         }
 
         $oldStatus = $order->status;
-        $order->status = 'cancelled';
-        $order->cancellation_reason = $validated['reason'];
-        $order->cancelled_by = 'admin';
-        $order->cancelled_at = now();
-        $order->save();
-
+        
         // Refund logic if payment was made (only for real orders)
-        if ($order->status === 'escrow_hold' && $order->payment) {
+        // CRITICAL: Check oldStatus BEFORE changing order status, otherwise condition will never be true
+        if ($oldStatus === 'escrow_hold' && $order->payment) {
             DB::transaction(function () use ($order) {
                 $buyerWallet = Wallet::lockForUpdate()
                     ->firstOrCreate(
@@ -581,6 +577,13 @@ class AdminController extends Controller
                 }
             });
         }
+
+        // Update order status AFTER refund processing
+        $order->status = 'cancelled';
+        $order->cancellation_reason = $validated['reason'];
+        $order->cancelled_by = 'admin';
+        $order->cancelled_at = now();
+        $order->save();
 
         // Audit log
         AuditHelper::log(

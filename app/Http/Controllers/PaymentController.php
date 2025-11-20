@@ -345,9 +345,29 @@ class PaymentController extends Controller
                                             ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
                                         );
                                     
+                                    // CRITICAL: Log wallet state before processing to track any anomalies
+                                    $walletBefore = [
+                                        'available_balance' => $buyerWallet->available_balance,
+                                        'on_hold_balance' => $buyerWallet->on_hold_balance,
+                                    ];
+                                    
                                     // Payment confirmed - credit escrow
+                                    // CRITICAL: NEVER add to available_balance for buyer payments - only escrow!
                                     $buyerWallet->on_hold_balance += $order->amount;
                                     $buyerWallet->save();
+
+                                    // Log wallet state after processing for audit trail
+                                    Log::info('Paylink Callback: Buyer wallet updated', [
+                                        'order_id' => $order->id,
+                                        'buyer_id' => $order->buyer_id,
+                                        'amount' => $order->amount,
+                                        'wallet_before' => $walletBefore,
+                                        'wallet_after' => [
+                                            'available_balance' => $buyerWallet->available_balance,
+                                            'on_hold_balance' => $buyerWallet->on_hold_balance,
+                                        ],
+                                        'note' => 'Payment added to escrow (on_hold_balance) - NOT available_balance',
+                                    ]);
                                     
                                     // Update order status to escrow_hold
                                     $oldStatus = $order->status;
