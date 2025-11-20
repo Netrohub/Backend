@@ -100,17 +100,35 @@ class TapPaymentService
      */
     public function createTransfer(array $data): array
     {
+        Log::info('Tap Transfer Request', [
+            'url' => $this->baseUrl . '/transfers',
+            'request_data' => $data,
+            'api_key_length' => strlen($this->secretKey),
+        ]);
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->secretKey,
             'Content-Type' => 'application/json',
         ])->post($this->baseUrl . '/transfers', $data);
 
-        Log::info('Tap Transfer Created', [
-            'request' => $data,
-            'response' => $response->json(),
+        $responseData = $response->json();
+        $statusCode = $response->status();
+
+        Log::info('Tap Transfer Response', [
+            'status_code' => $statusCode,
+            'response' => $responseData,
+            'success' => $response->successful(),
         ]);
 
-        return $response->json();
+        if (!$response->successful()) {
+            Log::error('Tap Transfer Failed', [
+                'status_code' => $statusCode,
+                'response' => $responseData,
+                'request_data' => $data,
+            ]);
+        }
+
+        return $responseData;
     }
 
     /**

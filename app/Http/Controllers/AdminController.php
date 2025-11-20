@@ -11,7 +11,6 @@ use App\Models\Review;
 use App\Models\Suggestion;
 use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
-use App\Services\TapPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -700,7 +699,7 @@ class AdminController extends Controller
             ], 400);
         }
 
-        // Process withdrawal via Tap Payments
+        // Process withdrawal (manual bank transfer - Paylink does not support payouts)
         return DB::transaction(function () use ($withdrawalRequest, $request) {
             $wallet = Wallet::lockForUpdate()->findOrFail($withdrawalRequest->wallet_id);
             
@@ -717,88 +716,65 @@ class AdminController extends Controller
                 ], 400);
             }
 
-            // Initiate transfer via Tap Payments API
-            $tapService = app(TapPaymentService::class);
+            // Validate required fields
+            if (empty($withdrawalRequest->iban) && empty($withdrawalRequest->bank_account)) {
+                Log::error('Withdrawal approval failed - missing bank account', [
+                    'withdrawal_request_id' => $withdrawalRequest->id,
+                ]);
+                return response()->json([
+                    'message' => 'تفاصيل الحساب البنكي غير مكتملة. يرجى مراجعة رقم الآيبان.',
+                    'error_code' => 'MISSING_BANK_ACCOUNT',
+                ], 400);
+            }
+
+            // NOTE: Paylink does not support payouts/transfers
+            // Withdrawals are processed manually by admin via bank transfer
+            // This approval marks the request as processing and releases escrow
+            // Admin must process the actual bank transfer separately
             
             try {
-                $transferData = [
+                // Release from escrow and update withdrawal status
+                $wallet->on_hold_balance -= $withdrawalRequest->amount;
+                $wallet->withdrawn_total += $withdrawalRequest->amount;
+                $wallet->save();
+
+                // Update withdrawal request
+                $oldStatus = $withdrawalRequest->status;
+                $withdrawalRequest->status = WithdrawalRequest::STATUS_PROCESSING;
+                $withdrawalRequest->processed_at = now();
+                $withdrawalRequest->save();
+
+                // Audit log
+                AuditHelper::log(
+                    'admin.withdrawal.approved',
+                    WithdrawalRequest::class,
+                    $withdrawalRequest->id,
+                    ['status' => $oldStatus],
+                    [
+                        'status' => WithdrawalRequest::STATUS_PROCESSING,
+                        'approved_by' => $request->user()->id,
+                        'note' => 'Withdrawal approved - manual bank transfer required',
+                    ],
+                    $request
+                );
+
+                Log::info('Withdrawal approved by admin - manual transfer required', [
+                    'withdrawal_request_id' => $withdrawalRequest->id,
+                    'admin_id' => $request->user()->id,
                     'amount' => $withdrawalRequest->amount,
-                    'currency' => 'SAR',
-                    'destination' => [
-                        'type' => 'bank_account',
-                        'bank_account' => $withdrawalRequest->iban ?? $withdrawalRequest->bank_account,
-                        'bank_name' => $withdrawalRequest->bank_name,
-                        'account_holder_name' => $withdrawalRequest->account_holder_name,
-                    ],
-                    'metadata' => [
-                        'withdrawal_request_id' => $withdrawalRequest->id,
-                        'user_id' => $withdrawalRequest->user_id,
-                        'approved_by_admin_id' => $request->user()->id,
-                    ],
-                ];
+                    'iban' => substr($withdrawalRequest->iban ?? $withdrawalRequest->bank_account ?? '', 0, 4) . '****',
+                    'bank_name' => $withdrawalRequest->bank_name,
+                    'account_holder_name' => $withdrawalRequest->account_holder_name,
+                    'note' => 'Admin must process bank transfer manually',
+                ]);
 
-                $tapResponse = $tapService->createTransfer($transferData);
+                // Notify user of approval
+                $withdrawalRequest->user->notify(new \App\Notifications\WithdrawalApproved($withdrawalRequest));
 
-                if (isset($tapResponse['id'])) {
-                    // Release from escrow and update withdrawal status
-                    $wallet->on_hold_balance -= $withdrawalRequest->amount;
-                    $wallet->withdrawn_total += $withdrawalRequest->amount;
-                    $wallet->save();
-
-                    // Update withdrawal request
-                    $oldStatus = $withdrawalRequest->status;
-                    $withdrawalRequest->status = WithdrawalRequest::STATUS_PROCESSING;
-                    $withdrawalRequest->tap_transfer_id = $tapResponse['id'];
-                    $withdrawalRequest->tap_response = $tapResponse;
-                    $withdrawalRequest->processed_at = now();
-                    $withdrawalRequest->save();
-
-                    // Audit log
-                    AuditHelper::log(
-                        'admin.withdrawal.approved',
-                        WithdrawalRequest::class,
-                        $withdrawalRequest->id,
-                        ['status' => $oldStatus],
-                        [
-                            'status' => WithdrawalRequest::STATUS_PROCESSING,
-                            'tap_transfer_id' => $tapResponse['id'],
-                            'approved_by' => $request->user()->id,
-                        ],
-                        $request
-                    );
-
-                    Log::info('Withdrawal approved and transfer initiated by admin', [
-                        'withdrawal_request_id' => $withdrawalRequest->id,
-                        'tap_transfer_id' => $tapResponse['id'],
-                        'admin_id' => $request->user()->id,
-                        'amount' => $withdrawalRequest->amount,
-                    ]);
-
-                    // Notify user of approval
-                    $withdrawalRequest->user->notify(new \App\Notifications\WithdrawalApproved($withdrawalRequest));
-
-                    return response()->json([
-                        'message' => 'تم الموافقة على طلب السحب وتم بدء عملية التحويل',
-                        'withdrawal_request' => $withdrawalRequest->fresh(['user', 'wallet']),
-                    ]);
-                } else {
-                    // If Tap API call fails, keep status as pending
-                    $withdrawalRequest->tap_response = $tapResponse;
-                    $withdrawalRequest->failure_reason = 'Failed to create transfer with payment gateway';
-                    $withdrawalRequest->save();
-
-                    Log::error('Withdrawal approval failed - Tap API error', [
-                        'withdrawal_request_id' => $withdrawalRequest->id,
-                        'tap_response' => $tapResponse,
-                        'admin_id' => $request->user()->id,
-                    ]);
-
-                    return response()->json([
-                        'message' => 'فشل بدء عملية التحويل. يرجى المحاولة مرة أخرى أو مراجعة تفاصيل الحساب البنكي.',
-                        'error_code' => 'TRANSFER_INITIATION_FAILED',
-                        'withdrawal_request' => $withdrawalRequest->fresh(['user', 'wallet']),
-                    ], 500);
-                }
+                return response()->json([
+                    'message' => 'تم الموافقة على طلب السحب. سيتم معالجة التحويل البنكي يدوياً خلال 1-4 أيام عمل.',
+                    'withdrawal_request' => $withdrawalRequest->fresh(['user', 'wallet']),
+                ]);
             } catch (\Exception $e) {
                 Log::error('Withdrawal approval exception', [
                     'withdrawal_request_id' => $withdrawalRequest->id,
