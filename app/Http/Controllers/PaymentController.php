@@ -321,7 +321,7 @@ class PaymentController extends Controller
                         // Webhook will still process if it arrives later (idempotent)
                         if ($order->status === 'payment_intent') {
                             try {
-                                DB::transaction(function () use ($order, $payment, $invoiceAmount) {
+                                DB::transaction(function () use ($order, $payment, $invoice, $invoiceAmount) {
                                     // Reload with lock to prevent race conditions
                                     $order = Order::lockForUpdate()->find($order->id);
                                     
@@ -406,6 +406,7 @@ class PaymentController extends Controller
                                     'order_id' => $orderId,
                                     'transaction_no' => $payment->paylink_transaction_no,
                                     'error' => $e->getMessage(),
+                                    'trace' => $e->getTraceAsString(),
                                     'note' => 'Webhook will process payment if it arrives',
                                 ]);
                                 // Continue - webhook will process if callback fails
