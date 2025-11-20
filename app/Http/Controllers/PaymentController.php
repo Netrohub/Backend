@@ -270,27 +270,51 @@ class PaymentController extends Controller
                 $invoice = $this->paylinkClient->getInvoice($payment->paylink_transaction_no);
                 
                 $orderStatus = $invoice['orderStatus'] ?? $invoice['status'] ?? null;
-                $paidAmount = $invoice['paidAmount'] ?? $invoice['amountPaid'] ?? 0;
+                
+                // Check multiple possible fields for paid amount
+                $paidAmount = $invoice['paidAmount'] 
+                    ?? $invoice['amountPaid'] 
+                    ?? $invoice['paymentReceipt']['amount'] 
+                    ?? 0;
+                
+                // If status is Paid but paidAmount is 0, check if paymentReceipt exists
+                // PaymentReceipt might indicate payment was successful
+                $hasPaymentReceipt = !empty($invoice['paymentReceipt']);
+                $invoiceAmount = $invoice['amount'] ?? 0;
 
                 Log::info('Paylink callback: Invoice status', [
                     'order_id' => $orderId,
                     'transaction_no' => $payment->paylink_transaction_no,
                     'order_status' => $orderStatus,
                     'paid_amount' => $paidAmount,
+                    'invoice_amount' => $invoiceAmount,
+                    'has_payment_receipt' => $hasPaymentReceipt,
+                    'payment_receipt' => $invoice['paymentReceipt'] ?? null,
                     'invoice_keys' => array_keys($invoice),
                 ]);
 
                 // Handle payment status
-                if (($orderStatus === 'Paid' || $orderStatus === 'paid') && $paidAmount > 0) {
-                    // Payment successful - webhook should handle the actual processing
-                    // But we can redirect to success page
-                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                // If orderStatus is "Paid", check for payment receipt or if order status changed
+                if ($orderStatus === 'Paid' || $orderStatus === 'paid') {
+                    // Check if order was already processed (webhook might have handled it)
+                    $order->refresh();
+                    if ($order->status === 'escrow_hold' || $order->status === 'completed') {
+                        // Order already processed - redirect to success
+                        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                    }
+                    
+                    // If status is Paid, even without paidAmount, webhook should handle verification
+                    // Redirect to processing page - webhook will complete the payment
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
                 } elseif ($orderStatus === 'Canceled' || $orderStatus === 'canceled' || $orderStatus === 'Failed' || $orderStatus === 'failed') {
                     // Payment failed or cancelled
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
-                } else {
-                    // Payment pending or unknown status
+                } elseif ($orderStatus === 'CREATED' || $orderStatus === 'Created' || $orderStatus === 'created') {
+                    // Payment still pending
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=pending');
+                } else {
+                    // Unknown status - redirect to processing and let webhook handle it
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
                 }
             } catch (\Exception $e) {
                 // getInvoice failed - might be 404 if invoice was just created or endpoint doesn't exist
