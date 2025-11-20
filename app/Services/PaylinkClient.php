@@ -139,10 +139,22 @@ class PaylinkClient
             Log::error('Paylink API Error', [
                 'status' => $response->status(),
                 'endpoint' => $endpoint,
+                'url' => $url,
                 'error' => $responseData,
+                'request_data' => $data,
             ]);
             
-            $errorMessage = $responseData['detail'] ?? $responseData['title'] ?? $responseData['message'] ?? 'Unknown error';
+            $errorMessage = $responseData['detail'] 
+                ?? $responseData['title'] 
+                ?? $responseData['message'] 
+                ?? $responseData['error'] 
+                ?? 'Unknown error';
+            
+            // For 404 errors, provide more context
+            if ($response->status() === 404) {
+                $errorMessage = 'Invoice not found or endpoint does not exist: ' . $endpoint;
+            }
+            
             throw new \Exception('Paylink API error: ' . $errorMessage);
         }
 

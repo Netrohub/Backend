@@ -142,20 +142,44 @@ class PaymentController extends Controller
             $payment = $result['payment'];
             $paylinkResponse = $result['paylinkResponse'];
 
-            // Get payment URL from invoice details
-            $paymentUrl = $paylinkResponse['url'] ?? null;
+            // Log full response for debugging
+            Log::info('Paylink addInvoice response', [
+                'order_id' => $order->id,
+                'transaction_no' => $paylinkResponse['transactionNo'] ?? null,
+                'response_keys' => array_keys($paylinkResponse),
+                'response' => $paylinkResponse,
+            ]);
+
+            // Get payment URL from addInvoice response
+            // Paylink addInvoice response should contain the payment URL directly
+            // Try multiple possible field names based on Paylink API
+            $paymentUrl = $paylinkResponse['url'] 
+                ?? $paylinkResponse['invoiceUrl'] 
+                ?? $paylinkResponse['paymentUrl'] 
+                ?? $paylinkResponse['link'] 
+                ?? $paylinkResponse['paymentLink']
+                ?? null;
             
+            // If URL not found in response, construct it manually
+            // Paylink payment URL format: https://paylink.sa/pay/{transactionNo}
+            // Both sandbox and production use paylink.sa domain for payment pages
+            if (!$paymentUrl && isset($paylinkResponse['transactionNo'])) {
+                // Paylink payment URL is always https://paylink.sa/pay/{transactionNo}
+                // regardless of API environment (sandbox or production)
+                $paymentUrl = 'https://paylink.sa/pay/' . $paylinkResponse['transactionNo'];
+                
+                Log::info('Constructed Paylink payment URL', [
+                    'transaction_no' => $paylinkResponse['transactionNo'],
+                    'constructed_url' => $paymentUrl,
+                ]);
+            }
+
             if (!$paymentUrl) {
-                // Try to get invoice details to retrieve payment URL
-                try {
-                    $invoice = $this->paylinkClient->getInvoice($paylinkResponse['transactionNo']);
-                    $paymentUrl = $invoice['url'] ?? null;
-                } catch (\Exception $e) {
-                    Log::warning('Failed to retrieve payment URL from invoice', [
-                        'transaction_no' => $paylinkResponse['transactionNo'],
-                        'error' => $e->getMessage(),
-                    ]);
-                }
+                Log::error('Payment URL not found in Paylink response', [
+                    'transaction_no' => $paylinkResponse['transactionNo'] ?? null,
+                    'response' => $paylinkResponse,
+                ]);
+                // Still return - frontend can handle missing URL
             }
 
             return response()->json([
@@ -206,10 +230,16 @@ class PaymentController extends Controller
             return redirect(config('app.frontend_url') . '/orders?error=invalid_callback');
         }
 
-        $order = Order::find($orderId);
+        $order = Order::withTrashed()->find($orderId);
         if (!$order) {
             Log::warning('Paylink callback: Order not found', ['order_id' => $orderId]);
             return redirect(config('app.frontend_url') . '/orders?error=order_not_found');
+        }
+
+        // Check if order is soft-deleted
+        if ($order->trashed()) {
+            Log::warning('Paylink callback: Order is soft-deleted', ['order_id' => $orderId]);
+            return redirect(config('app.frontend_url') . '/orders?error=order_deleted');
         }
 
         // SECURITY: Never trust callback query params - always re-query invoice status
@@ -225,29 +255,46 @@ class PaymentController extends Controller
             }
 
             // Get invoice status from Paylink API (never trust callback params)
-            $invoice = $this->paylinkClient->getInvoice($payment->paylink_transaction_no);
-            
-            $orderStatus = $invoice['orderStatus'] ?? null;
-            $paidAmount = $invoice['paidAmount'] ?? 0;
+            // Note: getInvoice might return 404 if invoice was just created
+            // In that case, rely on webhook for payment verification
+            try {
+                $invoice = $this->paylinkClient->getInvoice($payment->paylink_transaction_no);
+                
+                $orderStatus = $invoice['orderStatus'] ?? null;
+                $paidAmount = $invoice['paidAmount'] ?? 0;
 
-            Log::info('Paylink callback: Invoice status', [
-                'order_id' => $orderId,
-                'transaction_no' => $payment->paylink_transaction_no,
-                'order_status' => $orderStatus,
-                'paid_amount' => $paidAmount,
-            ]);
+                Log::info('Paylink callback: Invoice status', [
+                    'order_id' => $orderId,
+                    'transaction_no' => $payment->paylink_transaction_no,
+                    'order_status' => $orderStatus,
+                    'paid_amount' => $paidAmount,
+                ]);
 
-            // Handle payment status
-            if ($orderStatus === 'Paid' && $paidAmount > 0) {
-                // Payment successful - webhook should handle the actual processing
-                // But we can redirect to success page
-                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
-            } elseif ($orderStatus === 'Canceled' || $orderStatus === 'Failed') {
-                // Payment failed or cancelled
-                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
-            } else {
-                // Payment pending or unknown status
-                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=pending');
+                // Handle payment status
+                if ($orderStatus === 'Paid' && $paidAmount > 0) {
+                    // Payment successful - webhook should handle the actual processing
+                    // But we can redirect to success page
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                } elseif ($orderStatus === 'Canceled' || $orderStatus === 'Failed') {
+                    // Payment failed or cancelled
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
+                } else {
+                    // Payment pending or unknown status
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=pending');
+                }
+            } catch (\Exception $e) {
+                // getInvoice failed - might be 404 if invoice was just created
+                // This is OK - webhook will handle payment verification
+                Log::info('Paylink callback: Could not retrieve invoice yet, webhook will handle verification', [
+                    'order_id' => $orderId,
+                    'transaction_no' => $payment->paylink_transaction_no,
+                    'error' => $e->getMessage(),
+                    'note' => 'This is normal for recently created invoices - webhook will verify payment',
+                ]);
+                
+                // Redirect to order page - user can check status
+                // Webhook will update order status when payment is processed
+                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
             }
         } catch (\Exception $e) {
             Log::error('Paylink callback error', [

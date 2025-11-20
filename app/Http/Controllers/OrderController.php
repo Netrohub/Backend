@@ -109,7 +109,9 @@ class OrderController extends Controller
 
     public function show(Request $request, $id)
     {
-        $order = Order::with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
+        // Use withTrashed to find orders even if soft-deleted (for viewing payment status)
+        $order = Order::withTrashed()
+            ->with(['listing', 'buyer', 'seller', 'dispute', 'payment'])
             ->findOrFail($id);
 
         $user = $request->user();
