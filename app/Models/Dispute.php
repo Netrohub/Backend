@@ -18,6 +18,7 @@ class Dispute extends Model
         'description',
         'status',
         'resolved_by',
+        'resolution',
         'resolution_notes',
         'resolved_at',
     ];
