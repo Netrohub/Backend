@@ -258,24 +258,28 @@ class PaymentController extends Controller
             // Note: getInvoice might return 404 if invoice was just created
             // In that case, rely on webhook for payment verification
             try {
+                // Add small delay to ensure invoice is ready
+                usleep(500000); // 0.5 seconds
+                
                 $invoice = $this->paylinkClient->getInvoice($payment->paylink_transaction_no);
                 
-                $orderStatus = $invoice['orderStatus'] ?? null;
-                $paidAmount = $invoice['paidAmount'] ?? 0;
+                $orderStatus = $invoice['orderStatus'] ?? $invoice['status'] ?? null;
+                $paidAmount = $invoice['paidAmount'] ?? $invoice['amountPaid'] ?? 0;
 
                 Log::info('Paylink callback: Invoice status', [
                     'order_id' => $orderId,
                     'transaction_no' => $payment->paylink_transaction_no,
                     'order_status' => $orderStatus,
                     'paid_amount' => $paidAmount,
+                    'invoice_keys' => array_keys($invoice),
                 ]);
 
                 // Handle payment status
-                if ($orderStatus === 'Paid' && $paidAmount > 0) {
+                if (($orderStatus === 'Paid' || $orderStatus === 'paid') && $paidAmount > 0) {
                     // Payment successful - webhook should handle the actual processing
                     // But we can redirect to success page
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
-                } elseif ($orderStatus === 'Canceled' || $orderStatus === 'Failed') {
+                } elseif ($orderStatus === 'Canceled' || $orderStatus === 'canceled' || $orderStatus === 'Failed' || $orderStatus === 'failed') {
                     // Payment failed or cancelled
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
                 } else {
@@ -283,14 +287,19 @@ class PaymentController extends Controller
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=pending');
                 }
             } catch (\Exception $e) {
-                // getInvoice failed - might be 404 if invoice was just created
+                // getInvoice failed - might be 404 if invoice was just created or endpoint doesn't exist
                 // This is OK - webhook will handle payment verification
-                Log::info('Paylink callback: Could not retrieve invoice yet, webhook will handle verification', [
+                Log::info('Paylink callback: Could not retrieve invoice, webhook will handle verification', [
                     'order_id' => $orderId,
                     'transaction_no' => $payment->paylink_transaction_no,
                     'error' => $e->getMessage(),
                     'note' => 'This is normal for recently created invoices - webhook will verify payment',
                 ]);
+                
+                // Check order status - if already paid, redirect to success
+                if ($order->status === 'escrow_hold' || $order->status === 'completed') {
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                }
                 
                 // Redirect to order page - user can check status
                 // Webhook will update order status when payment is processed
