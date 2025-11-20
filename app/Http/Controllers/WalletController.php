@@ -35,28 +35,21 @@ class WalletController extends Controller
     }
 
     /**
-     * Get withdrawal fee information
+     * Get withdrawal fee information (uses platform fee percentage)
      */
     public function withdrawalFeeInfo(Request $request)
     {
-        // Get withdrawal fee percentage (default to platform_fee_percentage if withdrawal_fee_percentage doesn't exist)
-        $withdrawalFeePercentage = Cache::remember('withdrawal_fee_percentage', 3600, function () {
+        // Get platform fee percentage (used for withdrawals)
+        $platformFeePercentage = Cache::remember('platform_fee_percentage', 3600, function () {
             $fee = DB::table('settings')
-                ->where('key', 'withdrawal_fee_percentage')
-                ->value('value');
-            
-            // If withdrawal_fee_percentage doesn't exist, use platform_fee_percentage
-            if ($fee === null) {
-                $fee = DB::table('settings')
-                    ->where('key', 'platform_fee_percentage')
-                    ->value('value') ?? 0;
-            }
+                ->where('key', 'platform_fee_percentage')
+                ->value('value') ?? 0;
             
             return is_numeric($fee) ? (float)$fee : 0;
         });
         
         return response()->json([
-            'fee_percentage' => $withdrawalFeePercentage,
+            'fee_percentage' => $platformFeePercentage,
             'min_withdrawal' => self::MIN_WITHDRAWAL_AMOUNT,
             'max_withdrawal' => self::MAX_SINGLE_WITHDRAWAL,
         ]);
@@ -229,18 +222,11 @@ class WalletController extends Controller
             // Reverse to show newest orders first
             $orderBreakdown = array_reverse($orderBreakdown);
 
-            // Calculate withdrawal fee from settings (cached for 1 hour)
-            $feePercentage = Cache::remember('withdrawal_fee_percentage', 3600, function () {
+            // Calculate withdrawal fee from platform fee percentage (cached for 1 hour)
+            $feePercentage = Cache::remember('platform_fee_percentage', 3600, function () {
                 $fee = DB::table('settings')
-                    ->where('key', 'withdrawal_fee_percentage')
-                    ->value('value');
-                
-                // If withdrawal_fee_percentage doesn't exist, use platform_fee_percentage
-                if ($fee === null) {
-                    $fee = DB::table('settings')
-                        ->where('key', 'platform_fee_percentage')
-                        ->value('value') ?? 0;
-                }
+                    ->where('key', 'platform_fee_percentage')
+                    ->value('value') ?? 0;
                 
                 return is_numeric($fee) ? (float)$fee : 0;
             });
