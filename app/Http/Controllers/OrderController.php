@@ -241,7 +241,7 @@ class OrderController extends Controller
             // Update order status
             $oldStatus = $order->status;
             $order->status = 'completed';
-            $order->confirmed_at = now();
+            $order->completed_at = now();
             $order->save();
 
             // Audit log
