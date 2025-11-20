@@ -527,12 +527,20 @@ class ListingController extends Controller
         }
 
         // Log credential access
-        AuditHelper::log('listing_credentials_accessed', 'listings', $listing->id, $user->id, [
-            'accessed_by_owner' => $isOwner,
-            'accessed_by_admin' => $isAdmin,
-            'buyer_order_status' => $buyerOrder?->status,
-            'bill_images_unlocked' => $canViewBillImages,
-        ]);
+        AuditHelper::log(
+            'listing_credentials_accessed',
+            'listings',
+            $listing->id,
+            null, // oldValues (not applicable for access logs)
+            [
+                'accessed_by_owner' => $isOwner,
+                'accessed_by_admin' => $isAdmin,
+                'buyer_order_status' => $buyerOrder?->status,
+                'bill_images_unlocked' => $canViewBillImages,
+            ],
+            $request, // Request instance
+            $user->id // userId
+        );
 
         return response()->json([
             'listing_id' => $listing->id,
