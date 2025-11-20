@@ -72,8 +72,7 @@ Route::prefix('v1')->group(function () {
     Route::middleware('throttle:60,1')->group(function () {
         Route::post('/webhook/paylink', [WebhookController::class, 'paylink']);
         Route::post('/webhook/persona', [WebhookController::class, 'persona']);
-        // Legacy Tap webhooks (deprecated - will be removed)
-        Route::post('/webhook/tap', [WebhookController::class, 'tap']);
+        // Tap transfer webhook (still used for withdrawals)
         Route::post('/webhook/tap/transfer', [WebhookController::class, 'tapTransfer']);
     });
 
@@ -279,8 +278,4 @@ Route::prefix('v1')->group(function () {
     });
 });
 
-// Legacy routes without version prefix (deprecated, redirect to v1)
-// These are kept for backward compatibility but should be removed in future versions
-Route::get('/leaderboard', [LeaderboardController::class, 'index'])->name('api.leaderboard.legacy');
-Route::get('/members', [MemberController::class, 'index'])->name('api.members.legacy');
-Route::get('/members/{id}', [MemberController::class, 'show'])->name('api.members.show.legacy');
+// Legacy routes removed - all clients should use /api/v1/ prefix

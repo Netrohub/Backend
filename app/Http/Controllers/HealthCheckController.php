@@ -77,22 +77,8 @@ class HealthCheckController extends Controller
             ];
         }
 
-        // Check external services (non-blocking, timeout quickly)
-        $tapApiKey = config('services.tap.secret_key');
-        if ($tapApiKey) {
-            try {
-                $response = Http::timeout(2)->get('https://api.tap.company/v2');
-                $checks['services']['tap_payments'] = [
-                    'status' => $response->successful() ? 'healthy' : 'degraded',
-                    'note' => 'API reachability check',
-                ];
-            } catch (\Exception $e) {
-                $checks['services']['tap_payments'] = [
-                    'status' => 'degraded',
-                    'note' => 'Service check failed: ' . $e->getMessage(),
-                ];
-            }
-        }
+        // Tap Payments check removed - migrated to Paylink for payments
+        // Tap is still used for withdrawals, but health check not needed
 
         $personaApiKey = config('services.persona.api_key');
         if ($personaApiKey) {

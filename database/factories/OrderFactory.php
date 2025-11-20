@@ -22,7 +22,8 @@ class OrderFactory extends Factory
             'seller_id' => User::factory(),
             'amount' => fake()->randomFloat(2, 10, 500),
             'status' => 'pending',
-            'tap_charge_id' => null,
+            'tap_charge_id' => null, // Deprecated - migrated to Paylink
+            'paylink_transaction_no' => null,
             'paid_at' => null,
             'escrow_hold_at' => null,
             'escrow_release_at' => null,
@@ -36,7 +37,8 @@ class OrderFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'status' => 'paid',
             'paid_at' => now(),
-            'tap_charge_id' => 'chg_' . fake()->uuid(),
+            'tap_charge_id' => null, // Deprecated
+            'paylink_transaction_no' => 'TXN' . fake()->numerify('########'),
         ]);
     }
 
@@ -47,7 +49,8 @@ class OrderFactory extends Factory
             'paid_at' => now(),
             'escrow_hold_at' => now(),
             'escrow_release_at' => now()->addHours(12),
-            'tap_charge_id' => 'chg_' . fake()->uuid(),
+            'tap_charge_id' => null, // Deprecated
+            'paylink_transaction_no' => 'TXN' . fake()->numerify('########'),
         ]);
     }
 
@@ -59,7 +62,8 @@ class OrderFactory extends Factory
             'escrow_hold_at' => now()->subDays(2),
             'escrow_release_at' => now()->subDays(1),
             'completed_at' => now()->subDay(),
-            'tap_charge_id' => 'chg_' . fake()->uuid(),
+            'tap_charge_id' => null, // Deprecated
+            'paylink_transaction_no' => 'TXN' . fake()->numerify('########'),
         ]);
     }
 }

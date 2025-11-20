@@ -35,6 +35,8 @@ return [
         ],
     ],
 
+    // Tap Payments - DEPRECATED for payments (migrated to Paylink)
+    // Still used for withdrawals only
     'tap' => [
         'public_key' => env('TAP_PUBLIC_KEY'),
         'secret_key' => env('TAP_SECRET_KEY'),
