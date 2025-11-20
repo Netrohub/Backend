@@ -7,6 +7,9 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Wallet;
 use App\Services\PaylinkClient;
+use App\Notifications\PaymentConfirmed;
+use App\Notifications\OrderStatusChanged;
+use App\Helpers\AuditHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -313,8 +316,103 @@ class PaymentController extends Controller
                             'payment_date' => $invoice['paymentReceipt']['paymentDate'] ?? null,
                         ]);
                         
+                        // Process payment immediately if order hasn't been processed yet
+                        // This ensures order status is updated right away for better UX
+                        // Webhook will still process if it arrives later (idempotent)
+                        if ($order->status === 'payment_intent') {
+                            try {
+                                DB::transaction(function () use ($order, $payment, $invoiceAmount) {
+                                    // Reload with lock to prevent race conditions
+                                    $order = Order::lockForUpdate()->find($order->id);
+                                    
+                                    // Double-check status after lock
+                                    if ($order->status !== 'payment_intent') {
+                                        return; // Already processed
+                                    }
+                                    
+                                    // Reload payment with lock
+                                    $payment = Payment::lockForUpdate()->find($payment->id);
+                                    
+                                    // Double-check payment status
+                                    if ($payment->status === 'captured') {
+                                        return; // Already processed
+                                    }
+                                    
+                                    // Get buyer wallet with lock
+                                    $buyerWallet = Wallet::lockForUpdate()
+                                        ->firstOrCreate(
+                                            ['user_id' => $order->buyer_id],
+                                            ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                                        );
+                                    
+                                    // Payment confirmed - credit escrow
+                                    $buyerWallet->on_hold_balance += $order->amount;
+                                    $buyerWallet->save();
+                                    
+                                    // Update order status to escrow_hold
+                                    $oldStatus = $order->status;
+                                    $order->status = 'escrow_hold';
+                                    $order->paid_at = now();
+                                    $order->escrow_hold_at = now();
+                                    $order->escrow_release_at = now()->addHours(12);
+                                    $order->save();
+                                    
+                                    // Update payment status
+                                    $payment->status = 'captured';
+                                    $payment->captured_at = now();
+                                    $payment->paylink_response = array_merge($payment->paylink_response ?? [], $invoice);
+                                    $payment->save();
+                                    
+                                    // Mark listing as sold
+                                    $listing = $order->listing;
+                                    if ($listing && $listing->status === 'active') {
+                                        $listing->status = 'sold';
+                                        $listing->save();
+                                    }
+                                    
+                                    // Audit log
+                                    AuditHelper::log(
+                                        'order.payment_confirmed',
+                                        Order::class,
+                                        $order->id,
+                                        ['status' => $oldStatus, 'note' => 'Payment intent - not yet a real order'],
+                                        [
+                                            'status' => 'escrow_hold',
+                                            'paid_at' => $order->paid_at->toIso8601String(),
+                                            'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                                            'note' => 'Order confirmed - payment received via callback',
+                                        ],
+                                        request()
+                                    );
+                                    
+                                    // Send notifications
+                                    $order->buyer->notify(new PaymentConfirmed($order));
+                                    $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                                    $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                                    
+                                    // Schedule escrow release job
+                                    ReleaseEscrowFunds::dispatch($order->id)
+                                        ->delay(now()->addHours(12));
+                                    
+                                    Log::info('Paylink callback: Payment processed successfully', [
+                                        'order_id' => $order->id,
+                                        'transaction_no' => $payment->paylink_transaction_no,
+                                        'old_status' => $oldStatus,
+                                        'new_status' => $order->status,
+                                    ]);
+                                });
+                            } catch (\Exception $e) {
+                                Log::error('Paylink callback: Failed to process payment', [
+                                    'order_id' => $orderId,
+                                    'transaction_no' => $payment->paylink_transaction_no,
+                                    'error' => $e->getMessage(),
+                                    'note' => 'Webhook will process payment if it arrives',
+                                ]);
+                                // Continue - webhook will process if callback fails
+                            }
+                        }
+                        
                         // Payment is confirmed - redirect to success page
-                        // Webhook should have processed or will process shortly
                         return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
                     }
                     
