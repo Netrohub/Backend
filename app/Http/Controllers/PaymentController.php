@@ -221,7 +221,7 @@ class PaymentController extends Controller
                     'order_id' => $orderId,
                     'transaction_no' => $transactionNo,
                 ]);
-                return redirect(config('app.frontend_url') . '/orders/' . $orderId . '?error=payment_not_found');
+                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?error=payment_not_found');
             }
 
             // Get invoice status from Paylink API (never trust callback params)
@@ -241,20 +241,20 @@ class PaymentController extends Controller
             if ($orderStatus === 'Paid' && $paidAmount > 0) {
                 // Payment successful - webhook should handle the actual processing
                 // But we can redirect to success page
-                return redirect(config('app.frontend_url') . '/orders/' . $orderId . '?payment=success');
+                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
             } elseif ($orderStatus === 'Canceled' || $orderStatus === 'Failed') {
                 // Payment failed or cancelled
-                return redirect(config('app.frontend_url') . '/orders/' . $orderId . '?payment=failed');
+                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
             } else {
                 // Payment pending or unknown status
-                return redirect(config('app.frontend_url') . '/orders/' . $orderId . '?payment=pending');
+                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=pending');
             }
         } catch (\Exception $e) {
             Log::error('Paylink callback error', [
                 'order_id' => $orderId,
                 'error' => $e->getMessage(),
             ]);
-            return redirect(config('app.frontend_url') . '/orders/' . $orderId . '?error=callback_error');
+            return redirect(config('app.frontend_url') . '/order/' . $orderId . '?error=callback_error');
         }
     }
 }
