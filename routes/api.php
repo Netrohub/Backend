@@ -70,9 +70,10 @@ Route::prefix('v1')->group(function () {
     // Webhooks (no auth required, but rate limited by IP)
     // Rate limit: 60 requests per minute per IP to prevent DoS attacks
     Route::middleware('throttle:60,1')->group(function () {
-        Route::post('/webhook/tap', [WebhookController::class, 'tap']);
+        Route::post('/webhook/paylink', [WebhookController::class, 'paylink']);
         Route::post('/webhook/persona', [WebhookController::class, 'persona']);
-        // Transfer webhook route (if Tap sends separate transfer webhooks)
+        // Legacy Tap webhooks (deprecated - will be removed)
+        Route::post('/webhook/tap', [WebhookController::class, 'tap']);
         Route::post('/webhook/tap/transfer', [WebhookController::class, 'tapTransfer']);
     });
 
@@ -135,6 +136,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['verified', 'validateOrigin'])->group(function () {
             Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle.user:60,60');
             Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle.user:60,60');
+            Route::post('/checkout', [PaymentController::class, 'create'])->middleware('throttle.user:60,60'); // Alias for compatibility
         });
         
         Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min

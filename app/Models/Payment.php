@@ -13,10 +13,12 @@ class Payment extends Model
         'order_id',
         'tap_charge_id',
         'tap_reference',
+        'paylink_transaction_no',
         'status',
         'amount',
         'currency',
         'tap_response',
+        'paylink_response',
         'webhook_payload',
         'captured_at',
     ];
@@ -26,6 +28,7 @@ class Payment extends Model
         return [
             'amount' => 'decimal:2',
             'tap_response' => 'array',
+            'paylink_response' => 'array',
             'webhook_payload' => 'array',
             'captured_at' => 'datetime',
         ];

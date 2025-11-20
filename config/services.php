@@ -74,4 +74,10 @@ return [
         'webhook_secret' => env('DISCORD_BOT_WEBHOOK_SECRET'),
     ],
 
+    'paylink' => [
+        'base_url' => env('PAYLINK_BASE_URL', 'https://restpilot.paylink.sa'),
+        'api_id' => env('PAYLINK_API_ID'),
+        'secret' => env('PAYLINK_API_SECRET'),
+    ],
+
 ];

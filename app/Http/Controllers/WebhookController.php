@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
 use App\Services\TapPaymentService;
+use App\Services\PaylinkClient;
 use App\Services\PersonaService;
 use App\Notifications\PaymentConfirmed;
 use App\Notifications\OrderStatusChanged;
@@ -23,6 +24,7 @@ class WebhookController extends Controller
 {
     public function __construct(
         private TapPaymentService $tapService,
+        private PaylinkClient $paylinkClient,
         private PersonaService $personaService
     ) {}
 
@@ -331,5 +333,194 @@ class WebhookController extends Controller
         ]);
 
         return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+    }
+
+    /**
+     * Handle Paylink payment webhook
+     * Paylink sends webhook when payment status changes
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function paylink(Request $request)
+    {
+        $payload = $request->all();
+        
+        Log::info('Paylink Webhook Received', ['payload' => $payload]);
+
+        $transactionNo = $payload['transactionNo'] ?? $payload['transaction_no'] ?? null;
+
+        if (!$transactionNo) {
+            Log::warning('Paylink Webhook: Missing transaction number', ['payload' => $payload]);
+            return response()->json(['message' => 'Missing transaction number'], 400);
+        }
+
+        // Find payment by transaction number
+        $payment = Payment::where('paylink_transaction_no', $transactionNo)->first();
+
+        if (!$payment) {
+            Log::warning('Paylink Webhook: Payment not found', ['transaction_no' => $transactionNo]);
+            return response()->json(['message' => 'Payment not found'], 404);
+        }
+
+        $order = $payment->order;
+
+        // SECURITY: Always re-query invoice status from Paylink API (never trust webhook payload alone)
+        try {
+            $invoice = $this->paylinkClient->getInvoice($transactionNo);
+            
+            $orderStatus = $invoice['orderStatus'] ?? null;
+            $paidAmount = $invoice['paidAmount'] ?? 0;
+            $invoiceAmount = $invoice['amount'] ?? 0;
+
+            Log::info('Paylink Webhook: Invoice status', [
+                'transaction_no' => $transactionNo,
+                'order_id' => $order->id,
+                'order_status' => $orderStatus,
+                'paid_amount' => $paidAmount,
+                'invoice_amount' => $invoiceAmount,
+            ]);
+
+            // Update payment record
+            $payment->paylink_response = array_merge($payment->paylink_response ?? [], $invoice);
+            $payment->webhook_payload = $payload;
+
+            // Handle payment status
+            if ($orderStatus === 'Paid' && $paidAmount > 0) {
+                // SECURITY: Check if payment already processed (prevent webhook replay attacks)
+                if ($payment->status === 'captured') {
+                    Log::warning('Duplicate Paid webhook received - payment already processed', [
+                        'transaction_no' => $transactionNo,
+                        'order_id' => $order->id,
+                        'payment_id' => $payment->id,
+                    ]);
+                    return response()->json(['message' => 'Payment already processed'], 200);
+                }
+
+                // Only process if order is still in payment_intent status
+                if ($order->status === 'payment_intent') {
+                    // Wrap in transaction with pessimistic locking to prevent race conditions
+                    DB::transaction(function () use ($order, $payment, $paidAmount, $invoiceAmount) {
+                        // SECURITY: Reload order with lock to prevent concurrent processing
+                        $order = Order::lockForUpdate()->find($order->id);
+                        
+                        // Double-check status after lock (prevents duplicate processing)
+                        if ($order->status !== 'payment_intent') {
+                            Log::warning('Order status changed before webhook processing', [
+                                'order_id' => $order->id,
+                                'current_status' => $order->status,
+                            ]);
+                            return; // Already processed by another webhook
+                        }
+
+                        // Reload payment with lock
+                        $payment = Payment::lockForUpdate()->find($payment->id);
+                        
+                        // Double-check payment status
+                        if ($payment->status === 'captured') {
+                            Log::warning('Payment already captured before webhook processing', [
+                                'payment_id' => $payment->id,
+                            ]);
+                            return; // Already processed
+                        }
+
+                        // Validate paid amount matches order amount (with small tolerance for currency conversion)
+                        $expectedAmountSAR = round($order->amount * 3.75, 2); // USD to SAR rate
+                        $amountDifference = abs($paidAmount - $expectedAmountSAR);
+                        
+                        if ($amountDifference > 0.50) { // Allow 0.50 SAR tolerance
+                            Log::error('Paylink: Paid amount mismatch', [
+                                'order_id' => $order->id,
+                                'expected_sar' => $expectedAmountSAR,
+                                'paid_sar' => $paidAmount,
+                                'difference' => $amountDifference,
+                            ]);
+                            // Don't process payment if amount doesn't match
+                            return;
+                        }
+
+                        // Get buyer wallet with lock
+                        $buyerWallet = Wallet::lockForUpdate()
+                            ->firstOrCreate(
+                                ['user_id' => $order->buyer_id],
+                                ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                            );
+
+                        // Payment comes from Paylink (external payment gateway)
+                        // Since payment is already collected externally, we directly credit escrow
+                        // The funds never enter available_balance - they go straight to escrow for protection
+                        $buyerWallet->on_hold_balance += $order->amount;
+                        $buyerWallet->save();
+
+                        // CRITICAL: This is when the order becomes REAL (changes from payment_intent to escrow_hold)
+                        // payment_intent = temporary, not a real order
+                        // escrow_hold = real order, payment confirmed
+                        $oldStatus = $order->status;
+                        $order->status = 'escrow_hold';
+                        $order->paid_at = now();
+                        $order->escrow_hold_at = now();
+                        $order->escrow_release_at = now()->addHours(12);
+                        $order->save();
+
+                        // Update payment status to captured
+                        $payment->status = 'captured';
+                        $payment->captured_at = now();
+                        $payment->save();
+
+                        // Mark listing as sold only after payment is confirmed (order is now real)
+                        $listing = $order->listing;
+                        if ($listing && $listing->status === 'active') {
+                            $listing->status = 'sold';
+                            $listing->save();
+                        }
+
+                        // Audit log for order status change
+                        AuditHelper::log(
+                            'order.payment_confirmed',
+                            Order::class,
+                            $order->id,
+                            ['status' => $oldStatus, 'note' => 'Payment intent - not yet a real order'],
+                            [
+                                'status' => 'escrow_hold',
+                                'paid_at' => $order->paid_at->toIso8601String(),
+                                'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                                'note' => 'Order confirmed - payment received, now a real order',
+                            ],
+                            $request
+                        );
+
+                        // Send notifications
+                        $order->buyer->notify(new PaymentConfirmed($order));
+                        $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                        $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+
+                        // Schedule escrow release job
+                        ReleaseEscrowFunds::dispatch($order->id)
+                            ->delay(now()->addHours(12));
+                    });
+                }
+
+                // Update payment status
+                $payment->status = 'captured';
+                $payment->captured_at = now();
+            } elseif ($orderStatus === 'Canceled' || $orderStatus === 'Failed') {
+                $payment->status = 'failed';
+            } elseif ($orderStatus === 'Pending') {
+                $payment->status = 'initiated';
+            }
+
+            $payment->save();
+
+            return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+        } catch (\Exception $e) {
+            Log::error('Paylink Webhook Error', [
+                'transaction_no' => $transactionNo,
+                'order_id' => $order->id ?? null,
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            ]);
+
+            return response()->json(['message' => 'Webhook processing error'], 500);
+        }
     }
 }
