@@ -140,6 +140,17 @@ class OrderController extends Controller
         ]);
 
         if (isset($validated['status']) && $validated['status'] === 'cancelled') {
+            // CRITICAL: Digital products (accounts) CANNOT be cancelled once payment is confirmed
+            // Once credentials are shared (escrow_hold), cancellation is impossible
+            // This prevents buyers from getting free accounts by cancelling after receiving credentials
+            if ($order->status === 'escrow_hold') {
+                return response()->json([
+                    'message' => 'لا يمكن إلغاء الطلب - المنتج الرقمي (الحساب) لا يمكن إرجاعه بعد تأكيد الدفع ومشاركة البيانات',
+                    'error_code' => 'CANNOT_CANCEL_DIGITAL_PRODUCT',
+                    'reason' => 'Digital products cannot be cancelled once payment is confirmed and credentials are shared',
+                ], 400);
+            }
+            
             // Handle payment_intent cancellation (not a real order yet, just delete it)
             if ($order->status === 'payment_intent') {
                 // Payment intent was never paid, so just delete it (not a real order)
@@ -147,24 +158,12 @@ class OrderController extends Controller
                 return response()->json(['message' => 'تم إلغاء طلب الدفع'], 200);
             }
             
-            if ($order->status === 'escrow_hold') {
-                // Refund buyer - wrapped in transaction to prevent race conditions
-                DB::transaction(function () use ($order) {
-                    $buyerWallet = Wallet::lockForUpdate()
-                        ->firstOrCreate(
-                            ['user_id' => $order->buyer_id],
-                            ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
-                        );
-                    
-                    // Validate balance before refund
-                    if ($buyerWallet->on_hold_balance < $order->amount) {
-                        throw new \Exception(MessageHelper::ORDER_INSUFFICIENT_ESCROW);
-                    }
-                    
-                    $buyerWallet->available_balance += $order->amount;
-                    $buyerWallet->on_hold_balance -= $order->amount;
-                    $buyerWallet->save();
-                });
+            // Cannot cancel completed orders
+            if ($order->status === 'completed') {
+                return response()->json([
+                    'message' => 'لا يمكن إلغاء طلب مكتمل',
+                    'error_code' => 'CANNOT_CANCEL_COMPLETED',
+                ], 400);
             }
 
             $oldStatus = $order->status;
@@ -289,6 +288,23 @@ class OrderController extends Controller
             ], 400);
         }
 
+        // CRITICAL: Digital products (accounts) CANNOT be cancelled once payment is confirmed
+        // Once credentials are shared (escrow_hold), cancellation is impossible
+        // This prevents buyers from getting free accounts by cancelling after receiving credentials
+        if ($order->status === 'escrow_hold') {
+            // Load listing to check if it's a digital product (account listing)
+            $listing = $order->listing;
+            
+            // All listings in this platform are digital products (accounts)
+            // Digital products cannot be returned or cancelled once payment is confirmed
+            // because credentials have already been shared with the buyer
+            return response()->json([
+                'message' => 'لا يمكن إلغاء الطلب - المنتج الرقمي (الحساب) لا يمكن إرجاعه بعد تأكيد الدفع ومشاركة البيانات',
+                'error_code' => 'CANNOT_CANCEL_DIGITAL_PRODUCT',
+                'reason' => 'Digital products cannot be cancelled once payment is confirmed and credentials are shared',
+            ], 400);
+        }
+
         // Handle payment_intent cancellation (not a real order yet, just delete it)
         if ($order->status === 'payment_intent') {
             // Payment intent was never paid, so just delete it (not a real order)
@@ -299,29 +315,12 @@ class OrderController extends Controller
             ], 200);
         }
 
-        // Handle refund if in escrow (real order)
-        if ($order->status === 'escrow_hold') {
-            DB::transaction(function () use ($order) {
-                $buyerWallet = Wallet::lockForUpdate()
-                    ->firstOrCreate(
-                        ['user_id' => $order->buyer_id],
-                        ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
-                    );
-                
-                // Validate balance before refund
-                if ($buyerWallet->on_hold_balance < $order->amount) {
-                    throw new \Exception(MessageHelper::ORDER_INSUFFICIENT_ESCROW);
-                }
-                
-                $buyerWallet->available_balance += $order->amount;
-                $buyerWallet->on_hold_balance -= $order->amount;
-                $buyerWallet->save();
-            });
-        }
-
-        $oldStatus = $order->status;
-        $order->status = 'cancelled';
-        $order->save();
+        // For any other status (escrow_hold already blocked above, this should not reach here)
+        // This prevents cancellation for orders that are not payment_intent
+        return response()->json([
+            'message' => 'لا يمكن إلغاء الطلب - المنتج الرقمي (الحساب) لا يمكن إرجاعه بعد تأكيد الدفع',
+            'error_code' => 'CANNOT_CANCEL_AFTER_PAYMENT',
+        ], 400);
         
         // Revert listing back to active if it was marked as sold
         $listing = $order->listing;
