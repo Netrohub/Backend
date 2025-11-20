@@ -355,12 +355,34 @@ class WebhookController extends Controller
             return response()->json(['message' => 'Missing transaction number'], 400);
         }
 
+        // Check if this is a test webhook (Paylink sends test transactions)
+        $isTest = $payload['test'] ?? false;
+        if ($isTest || str_contains(strtolower($transactionNo), 'test')) {
+            Log::info('Paylink Test Webhook Received', [
+                'transaction_no' => $transactionNo,
+                'payload' => $payload,
+            ]);
+            // Return success for test webhooks
+            return response()->json([
+                'message' => 'Test webhook received successfully',
+                'status' => 'ok',
+            ], 200);
+        }
+
         // Find payment by transaction number
         $payment = Payment::where('paylink_transaction_no', $transactionNo)->first();
 
         if (!$payment) {
-            Log::warning('Paylink Webhook: Payment not found', ['transaction_no' => $transactionNo]);
-            return response()->json(['message' => 'Payment not found'], 404);
+            Log::warning('Paylink Webhook: Payment not found', [
+                'transaction_no' => $transactionNo,
+                'payload' => $payload,
+            ]);
+            // Return 200 instead of 404 to prevent Paylink from retrying
+            // This handles cases where webhook is sent before payment record exists
+            return response()->json([
+                'message' => 'Payment not found - may be test webhook or payment not yet created',
+                'status' => 'ignored',
+            ], 200);
         }
 
         $order = $payment->order;
