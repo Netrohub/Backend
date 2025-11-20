@@ -260,8 +260,10 @@ class WebhookController extends Controller
             $invoice = $this->paylinkClient->getInvoice($transactionNo);
             
             $orderStatus = $invoice['orderStatus'] ?? null;
-            $paidAmount = $invoice['paidAmount'] ?? 0;
+            $paidAmount = $invoice['paidAmount'] ?? $invoice['amountPaid'] ?? 0;
             $invoiceAmount = $invoice['amount'] ?? 0;
+            $hasPaymentReceipt = !empty($invoice['paymentReceipt']);
+            $paymentReceipt = $invoice['paymentReceipt'] ?? null;
 
             Log::info('Paylink Webhook: Invoice status', [
                 'transaction_no' => $transactionNo,
@@ -269,6 +271,8 @@ class WebhookController extends Controller
                 'order_status' => $orderStatus,
                 'paid_amount' => $paidAmount,
                 'invoice_amount' => $invoiceAmount,
+                'has_payment_receipt' => $hasPaymentReceipt,
+                'payment_receipt' => $paymentReceipt,
             ]);
 
             // Update payment record
@@ -276,7 +280,13 @@ class WebhookController extends Controller
             $payment->webhook_payload = $payload;
 
             // Handle payment status
-            if ($orderStatus === 'Paid' && $paidAmount > 0) {
+            // Payment is confirmed if:
+            // 1. orderStatus is 'Paid' AND paidAmount > 0, OR
+            // 2. orderStatus is 'Paid' AND paymentReceipt exists (payment receipt confirms payment even if paidAmount is 0 in test)
+            $isPaid = ($orderStatus === 'Paid' || $orderStatus === 'paid') && 
+                     (($paidAmount > 0) || $hasPaymentReceipt);
+            
+            if ($isPaid) {
                 // SECURITY: Check if payment already processed (prevent webhook replay attacks)
                 if ($payment->status === 'captured') {
                     Log::warning('Duplicate Paid webhook received - payment already processed', [
@@ -315,18 +325,39 @@ class WebhookController extends Controller
                         }
 
                         // Validate paid amount matches order amount (with small tolerance for currency conversion)
-                        $expectedAmountSAR = round($order->amount * 3.75, 2); // USD to SAR rate
-                        $amountDifference = abs($paidAmount - $expectedAmountSAR);
-                        
-                        if ($amountDifference > 0.50) { // Allow 0.50 SAR tolerance
-                            Log::error('Paylink: Paid amount mismatch', [
+                        // If paidAmount is 0 but paymentReceipt exists, trust the receipt (common in test mode)
+                        if ($paidAmount > 0) {
+                            $expectedAmountSAR = round($order->amount * 3.75, 2); // USD to SAR rate
+                            $amountDifference = abs($paidAmount - $expectedAmountSAR);
+
+                            if ($amountDifference > 0.50) { // Allow 0.50 SAR tolerance
+                                Log::error('Paylink: Paid amount mismatch', [
+                                    'order_id' => $order->id,
+                                    'expected_sar' => $expectedAmountSAR,
+                                    'paid_sar' => $paidAmount,
+                                    'difference' => $amountDifference,
+                                ]);
+                                // Don't process payment if amount doesn't match
+                                return;
+                            }
+                        } elseif (!$hasPaymentReceipt) {
+                            // No paid amount and no receipt - don't process
+                            Log::warning('Paylink: Payment status is Paid but no paidAmount or paymentReceipt', [
                                 'order_id' => $order->id,
-                                'expected_sar' => $expectedAmountSAR,
-                                'paid_sar' => $paidAmount,
-                                'difference' => $amountDifference,
+                                'transaction_no' => $transactionNo,
                             ]);
-                            // Don't process payment if amount doesn't match
                             return;
+                        }
+                        
+                        // Log payment confirmation
+                        if ($hasPaymentReceipt) {
+                            Log::info('Paylink: Payment confirmed via payment receipt', [
+                                'order_id' => $order->id,
+                                'transaction_no' => $transactionNo,
+                                'payment_method' => $paymentReceipt['paymentMethod'] ?? null,
+                                'payment_date' => $paymentReceipt['paymentDate'] ?? null,
+                                'paid_amount' => $paidAmount,
+                            ]);
                         }
 
                         // Get buyer wallet with lock

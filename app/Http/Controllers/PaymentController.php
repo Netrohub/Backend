@@ -303,7 +303,22 @@ class PaymentController extends Controller
                         return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
                     }
                     
-                    // If status is Paid, even without paidAmount, webhook should handle verification
+                    // If paymentReceipt exists, payment is confirmed even if paidAmount is 0
+                    // Payment receipt contains: receiptUrl, passcode, paymentMethod, paymentDate, bankCardNumber
+                    if ($hasPaymentReceipt) {
+                        Log::info('Paylink callback: Payment confirmed via payment receipt', [
+                            'order_id' => $orderId,
+                            'transaction_no' => $payment->paylink_transaction_no,
+                            'payment_method' => $invoice['paymentReceipt']['paymentMethod'] ?? null,
+                            'payment_date' => $invoice['paymentReceipt']['paymentDate'] ?? null,
+                        ]);
+                        
+                        // Payment is confirmed - redirect to success page
+                        // Webhook should have processed or will process shortly
+                        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                    }
+                    
+                    // If status is Paid but no receipt yet, webhook should handle verification
                     // Redirect to processing page - webhook will complete the payment
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
                 } elseif ($orderStatus === 'Canceled' || $orderStatus === 'canceled' || $orderStatus === 'Failed' || $orderStatus === 'failed') {
