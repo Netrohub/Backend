@@ -19,7 +19,7 @@ class SecurityHeaders
         $response->headers->set('X-Frame-Options', 'DENY');
         $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(self https://inquiry.withpersona.com), camera=(self https://inquiry.withpersona.com)');
+        $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(self "https://inquiry.withpersona.com"), camera=(self "https://inquiry.withpersona.com")');
 
         if (!App::environment('local', 'testing')) {
             $response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
