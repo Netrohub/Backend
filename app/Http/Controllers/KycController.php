@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\KycVerification;
 use App\Services\PersonaService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class KycController extends Controller
 {
@@ -41,8 +42,50 @@ class KycController extends Controller
             return response()->json(['message' => 'KYC already verified'], 400);
         }
 
-        // Create Persona inquiry
-        $inquiryData = [
+        try {
+            $personaResponse = $this->personaService->createInquiry($this->buildInquiryPayload($user));
+        } catch (\Exception $e) {
+            Log::error('Persona API Error', [
+                'error' => $e->getMessage(),
+                'user_id' => $user->id,
+                'template_id' => config('services.persona.template_id'),
+                'environment_id' => config('services.persona.environment_id'),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            $errorMessage = 'فشل الاتصال بخدمة التحقق. يرجى المحاولة لاحقاً.';
+            if (str_contains($e->getMessage(), 'Record not found') || str_contains($e->getMessage(), '404')) {
+                $errorMessage = 'خطأ في إعدادات التحقق. يرجى التحقق من معرف القالب وبيئة Persona.';
+            }
+
+            return response()->json([
+                'message' => $errorMessage,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+
+        if (isset($personaResponse['errors']) && !empty($personaResponse['errors'])) {
+            $errorMessage = $personaResponse['errors'][0]['title'] ?? 'فشل إنشاء طلب التحقق';
+            Log::error('Persona API Error Response', [
+                'errors' => $personaResponse['errors'],
+            ]);
+            return response()->json([
+                'message' => $errorMessage,
+                'errors' => $personaResponse['errors'],
+            ], 500);
+        }
+
+        $result = $this->persistPersonaResponse($user, $personaResponse);
+
+        return response()->json([
+            'kyc' => $result['kyc'],
+            'inquiry_url' => $result['inquiry_url'],
+        ], 201);
+    }
+
+    private function buildInquiryPayload($user): array
+    {
+        return [
             'reference-id' => 'user_' . $user->id,
             'fields' => [
                 'name-first' => explode(' ', $user->name)[0] ?? '',
@@ -50,71 +93,14 @@ class KycController extends Controller
                 'email-address' => $user->email,
             ],
         ];
+    }
 
-        try {
-            $personaResponse = $this->personaService->createInquiry($inquiryData);
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Persona API Error', [
-                'error' => $e->getMessage(),
-                'user_id' => $user->id,
-                'template_id' => config('services.persona.template_id'),
-                'environment_id' => config('services.persona.environment_id'),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            
-            // Provide more specific error message for 404 errors
-            $errorMessage = 'فشل الاتصال بخدمة التحقق. يرجى المحاولة لاحقاً.';
-            if (str_contains($e->getMessage(), 'Record not found') || str_contains($e->getMessage(), '404')) {
-                $errorMessage = 'خطأ في إعدادات التحقق. يرجى التحقق من معرف القالب وبيئة Persona.';
-            }
-            
-            return response()->json([
-                'message' => $errorMessage,
-                'error' => $e->getMessage()
-            ], 500);
-        }
-
-        // Check for Persona API errors
-        if (isset($personaResponse['errors']) && !empty($personaResponse['errors'])) {
-            $errorMessage = $personaResponse['errors'][0]['title'] ?? 'فشل إنشاء طلب التحقق';
-            \Illuminate\Support\Facades\Log::error('Persona API Error Response', [
-                'errors' => $personaResponse['errors'],
-            ]);
-            return response()->json([
-                'message' => $errorMessage,
-                'errors' => $personaResponse['errors']
-            ], 500);
-        }
-
-        if (!isset($personaResponse['data']['id'])) {
-            \Illuminate\Support\Facades\Log::error('Persona API: Missing inquiry ID', [
-                'response' => $personaResponse,
-            ]);
-            return response()->json(['message' => 'Failed to create KYC inquiry'], 500);
-        }
-
+    private function persistPersonaResponse($user, array $personaResponse): array
+    {
         $inquiryId = $personaResponse['data']['id'];
 
-        $additionalPersonaData = null;
-        $inquiryUrl = $personaResponse['data']['attributes']['inquiry-url'] ?? null;
+        [$personaData, $inquiryUrl] = $this->hydratePersonaResponse($inquiryId, $personaResponse);
 
-        try {
-            $additionalPersonaData = $this->personaService->retrieveInquiry($inquiryId);
-            $inquiryUrl = $inquiryUrl
-                ?? $additionalPersonaData['data']['attributes']['inquiry-url']
-                ?? $additionalPersonaData['data']['attributes']['inquiry_url']
-                ?? null;
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::warning('Persona verify (post-create) request failed', [
-                'user_id' => $user->id,
-                'inquiry_id' => $inquiryId,
-                'error' => $e->getMessage(),
-            ]);
-        }
-
-        $personaData = $additionalPersonaData ?? $personaResponse;
-
-        // Create or update KYC record
         $kyc = KycVerification::updateOrCreate(
             ['user_id' => $user->id],
             [
@@ -124,10 +110,104 @@ class KycController extends Controller
             ]
         );
 
-        return response()->json([
+        return [
             'kyc' => $kyc,
+            'inquiry_id' => $inquiryId,
             'inquiry_url' => $inquiryUrl,
-        ], 201);
+        ];
+    }
+
+    private function hydratePersonaResponse(string $inquiryId, array $personaResponse): array
+    {
+        $personaData = $personaResponse;
+        $inquiryUrl = $this->extractInquiryUrl($personaResponse);
+
+        try {
+            $retrieved = $this->personaService->retrieveInquiry($inquiryId);
+            $personaData = $retrieved;
+            $inquiryUrl = $inquiryUrl ?? $this->extractInquiryUrl($retrieved);
+        } catch (\Exception $e) {
+            Log::warning('Persona hydrate failure', [
+                'inquiry_id' => $inquiryId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return [$personaData, $inquiryUrl];
+    }
+
+    private function extractInquiryUrl(array $response): ?string
+    {
+        return $response['data']['attributes']['inquiry-url']
+            ?? $response['data']['attributes']['inquiry_url']
+            ?? $response['data']['attributes']['inquiryUrl']
+            ?? null;
+    }
+
+    private function cancelExistingInquiry($user): void
+    {
+        $kyc = KycVerification::where('user_id', $user->id)->first();
+        if (!$kyc || !$kyc->persona_inquiry_id || ($kyc->status === 'verified')) {
+            return;
+        }
+
+        try {
+            $this->personaService->cancelInquiry($kyc->persona_inquiry_id);
+            $kyc->status = null;
+            $kyc->save();
+        } catch (\Exception $e) {
+            Log::warning('Persona cancel failed', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function reset(Request $request)
+    {
+        $user = $request->user();
+        $this->cancelExistingInquiry($user);
+
+        try {
+            $personaResponse = $this->personaService->createInquiry($this->buildInquiryPayload($user));
+        } catch (\Exception $e) {
+            Log::error('Persona reset error', [
+                'error' => $e->getMessage(),
+                'user_id' => $user->id,
+            ]);
+            return response()->json(['message' => 'Failed to reset inquiry', 'error' => $e->getMessage()], 500);
+        }
+
+        $result = $this->persistPersonaResponse($user, $personaResponse);
+
+        try {
+            $resumeResponse = $this->personaService->resumeInquiry($result['inquiry_id']);
+            $sessionToken = $resumeResponse['meta']['session-token'] ?? null;
+        } catch (\Exception $e) {
+            Log::error('Persona resume after reset failed', [
+                'user_id' => $user->id,
+                'inquiry_id' => $result['inquiry_id'],
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Failed to resume new inquiry', 'error' => $e->getMessage()], 500);
+        }
+
+        if (!$sessionToken) {
+            Log::error('Persona resume after reset missing token', [
+                'user_id' => $user->id,
+                'inquiry_id' => $result['inquiry_id'],
+                'response' => $resumeResponse ?? null,
+            ]);
+            return response()->json(['message' => 'Session token missing after reset'], 500);
+        }
+
+        return response()->json([
+            'kyc' => $result['kyc'],
+            'inquiry_url' => $result['inquiry_url'],
+            'inquiry_id' => $result['inquiry_id'],
+            'session_token' => $sessionToken,
+        ], 200);
     }
 
     /**
@@ -457,3 +537,4 @@ class KycController extends Controller
         }
     }
 }
+
