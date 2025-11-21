@@ -195,7 +195,7 @@ Route::prefix('v1')->group(function () {
 
         // KYC (strict rate limiting to prevent Persona API cost abuse)
         Route::get('/kyc', [KycController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min for better UX
-        Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:20,60'); // Increased from 5 to 20
+        Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:30,60'); // Increased from 20 to 30
         Route::post('/kyc/sync', [KycController::class, 'sync'])->middleware('throttle:30,60'); // Increased from 10 to 30
         Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:60,60'); // Increased from 10 to 60
         
