@@ -54,7 +54,7 @@ class KycController extends Controller
         try {
             $personaResponse = $this->personaService->createInquiry($inquiryData);
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Persona API Error (Sandbox)', [
+            \Illuminate\Support\Facades\Log::error('Persona API Error', [
                 'error' => $e->getMessage(),
                 'user_id' => $user->id,
                 'template_id' => config('services.persona.template_id'),
@@ -65,7 +65,7 @@ class KycController extends Controller
             // Provide more specific error message for 404 errors
             $errorMessage = 'فشل الاتصال بخدمة التحقق. يرجى المحاولة لاحقاً.';
             if (str_contains($e->getMessage(), 'Record not found') || str_contains($e->getMessage(), '404')) {
-                $errorMessage = 'خطأ في إعدادات التحقق. يرجى التحقق من معرف القالب وبيئة الساندبوكس في إعدادات Persona.';
+                $errorMessage = 'خطأ في إعدادات التحقق. يرجى التحقق من معرف القالب وبيئة Persona.';
             }
             
             return response()->json([

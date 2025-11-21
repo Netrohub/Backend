@@ -45,7 +45,7 @@ class PersonaService
         ], $data);
 
         // Log the full request details for debugging
-        Log::info('Persona API Request (Sandbox)', [
+        Log::info('Persona API Request', [
             'url' => $this->baseUrl . '/inquiries',
             'template_id' => $this->templateId,
             'environment_id' => $this->environmentId,
