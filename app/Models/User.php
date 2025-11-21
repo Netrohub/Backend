@@ -9,6 +9,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Auth\MustVerifyEmail as MustVerifyEmailTrait;
+use App\Models\KycVerification;
 use App\Notifications\CustomVerifyEmail;
 
 class User extends Authenticatable implements MustVerifyEmail
@@ -82,11 +83,6 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasOne(Wallet::class);
     }
 
-    public function kycVerification()
-    {
-        return $this->hasOne(KycVerification::class);
-    }
-
     public function auditLogs()
     {
         return $this->hasMany(AuditLog::class);
@@ -132,6 +128,20 @@ class User extends Authenticatable implements MustVerifyEmail
             // Reviews table doesn't exist yet
             return 0;
         }
+    }
+
+    public function kycVerification()
+    {
+        return $this->hasOne(KycVerification::class)->latestOfMany();
+    }
+
+    public function getIsVerifiedAttribute()
+    {
+        if (array_key_exists('is_verified', $this->attributes) && $this->attributes['is_verified']) {
+            return (bool) $this->attributes['is_verified'];
+        }
+
+        return $this->kycVerification?->status === 'verified';
     }
 
     // Helper methods

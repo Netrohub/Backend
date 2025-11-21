@@ -102,26 +102,15 @@ Route::prefix('v1')->group(function () {
             Route::post('/disconnect', [\App\Http\Controllers\TikTokController::class, 'disconnect']);
         });
         
+        Route::prefix('kyc')->middleware('throttle:30,1')->group(function () {
+            Route::post('/start', [KycController::class, 'start']);
+            Route::get('/status', [KycController::class, 'status']);
+        });
+
         // Email verification (strict rate limit to prevent email spam)
         Route::post('/email/resend', [AuthController::class, 'sendVerificationEmail'])
             ->middleware('throttle:3,60') // 3 per hour (very strict - prevent spam)
             ->name('verification.send');
-
-        // Images (require KYC verification)
-        Route::middleware('kycVerified')->group(function () {
-            Route::post('/images/upload', [ImageController::class, 'upload']);
-            Route::get('/images', [ImageController::class, 'index']); // Get user's uploaded images
-            Route::delete('/images/{id}', [ImageController::class, 'destroy']); // Delete image
-            Route::get('/images/verify-config', [ImageController::class, 'verifyConfig']); // Diagnostic endpoint
-        });
-
-        // Listings (require KYC verification for creating/updating/deleting)
-        // SECURITY: Use account-based rate limiting + origin validation for state-changing operations
-        Route::middleware(['kycVerified', 'validateOrigin'])->group(function () {
-            Route::post('/listings', [ListingController::class, 'store'])->middleware('throttle.user:60,60');
-            Route::put('/listings/{id}', [ListingController::class, 'update'])->middleware('throttle.user:120,60');
-            Route::delete('/listings/{id}', [ListingController::class, 'destroy'])->middleware('throttle.user:60,60');
-        });
 
         // My listings (user's own listings only - data isolation)
         Route::get('/my-listings', [ListingController::class, 'myListings'])->middleware('throttle:60,1');
@@ -193,14 +182,6 @@ Route::prefix('v1')->group(function () {
             Route::post('/wallet/withdraw', [WalletController::class, 'withdraw']);
         });
 
-        // KYC (strict rate limiting to prevent Persona API cost abuse)
-        Route::get('/kyc', [KycController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min for better UX
-        Route::post('/kyc', [KycController::class, 'create'])->middleware('throttle:60,60'); // Increased from 20 to 60
-        Route::post('/kyc/resume', [KycController::class, 'resume'])->middleware('throttle:60,60');
-        Route::post('/kyc/reset', [KycController::class, 'reset'])->middleware('throttle:60,60');
-        Route::post('/kyc/sync', [KycController::class, 'sync'])->middleware('throttle:60,60'); // Increased from 10 to 60
-        Route::get('/kyc/verify-config', [KycController::class, 'verifyConfig'])->middleware('throttle:60,60'); // Increased from 10 to 60
-        
         // Notifications with rate limiting to prevent spam
         // Increased to 240/min (4 req/sec) to support bell polling
         Route::middleware('throttle:240,1')->group(function () {
@@ -217,10 +198,22 @@ Route::prefix('v1')->group(function () {
             Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
             Route::delete('/notifications/read/all', [NotificationController::class, 'deleteAllRead']);
         });
-        
+
         // Settings (public read access for certain settings)
         Route::get('/settings/{key}', [SettingsController::class, 'show']);
-        
+
+        // Listing and image management (only verified users can upload or create)
+        Route::middleware(['kycVerified', 'throttle:30,1'])->group(function () {
+            Route::post('/listings', [ListingController::class, 'store']);
+            Route::put('/listings/{id}', [ListingController::class, 'update']);
+            Route::delete('/listings/{id}', [ListingController::class, 'destroy']);
+
+            Route::post('/images/upload', [ImageController::class, 'upload']);
+            Route::get('/images', [ImageController::class, 'index']);
+            Route::delete('/images/{id}', [ImageController::class, 'destroy']);
+            Route::get('/images/verify-config', [ImageController::class, 'verifyConfig']);
+        });
+
         // Payment callback (handled by frontend, but route exists for reference)
         // Frontend should handle: /orders/{id}/payment/callback
         // This route would be in web.php if backend needs to handle callback
@@ -242,14 +235,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/activity', [AdminController::class, 'activity']);
             
             // Read operations (generous limits for browsing)
-            Route::get('/users', [AdminController::class, 'users']);
-            Route::get('/listings', [AdminController::class, 'listings']);
-            Route::get('/orders', [AdminController::class, 'orders']);
-            Route::get('/disputes', [AdminController::class, 'disputes']);
-            Route::get('/kyc', [AdminController::class, 'kyc']);
-            Route::get('/reviews', [AdminController::class, 'reviews']);
-            Route::get('/financial', [AdminController::class, 'financial']);
-            Route::get('/settings', [SettingsController::class, 'index']);
+                    Route::get('/users', [AdminController::class, 'users']);
+                    Route::get('/listings', [AdminController::class, 'listings']);
+                    Route::get('/orders', [AdminController::class, 'orders']);
+                    Route::get('/disputes', [AdminController::class, 'disputes']);
+                    Route::get('/reviews', [AdminController::class, 'reviews']);
+                    Route::get('/financial', [AdminController::class, 'financial']);
+                    Route::get('/settings', [SettingsController::class, 'index']);
+                    Route::get('/kyc', [AdminController::class, 'kyc']);
             
             // Write operations (rate limiting for safety)
             Route::middleware('throttle:120,1')->group(function () {

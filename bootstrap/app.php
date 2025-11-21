@@ -27,9 +27,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'verified' => \App\Http\Middleware\EnsureEmailIsVerified::class,
             'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
-            'kycVerified' => \App\Http\Middleware\EnsureKycVerified::class,
             'validateOrigin' => \App\Http\Middleware\ValidateOrigin::class,
             'throttle.user' => \App\Http\Middleware\ThrottleByUser::class,
+            'kycVerified' => \App\Http\Middleware\EnsureKycVerified::class,
         ]);
 
         // Rate limiting - throttleApi() requires a rate limiter named 'api' to be defined

@@ -3,255 +3,63 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
+use RuntimeException;
 
 class PersonaService
 {
-    private string $apiKey;
-    private string $baseUrl;
-    private string $templateId;
-    private string $environmentId;
+    public function __construct(
+        protected string $apiKey = '',
+        protected string $baseUrl = 'https://api.withpersona.com/api/v1',
+    ) {
+        $this->apiKey = $this->apiKey ?: config('services.persona.api_key');
+        $this->baseUrl = config('services.persona.base_url') ?: $this->baseUrl;
 
-    public function __construct()
-    {
-        $apiKey = config('services.persona.api_key');
-        $templateId = config('services.persona.template_id');
-        $environmentId = config('services.persona.environment_id');
-        
-        // Validate required configuration before assignment
-        if (empty($apiKey)) {
-            throw new \RuntimeException('PERSONA_API_KEY is not configured. Please set it in your environment variables.');
+        if (empty($this->apiKey)) {
+            throw new RuntimeException('Persona API key is not configured.');
         }
-        if (empty($templateId)) {
-            throw new \RuntimeException('PERSONA_TEMPLATE_ID is not configured. Please set it in your environment variables.');
-        }
-        if (empty($environmentId)) {
-            throw new \RuntimeException('PERSONA_ENVIRONMENT_ID is not configured. Please set it in your environment variables.');
-        }
-        
-        // Assign after validation (ensures they're non-null strings)
-        $this->apiKey = (string) $apiKey;
-        $this->baseUrl = config('services.persona.base_url', 'https://withpersona.com/api/v1');
-        $this->templateId = (string) $templateId;
-        $this->environmentId = (string) $environmentId;
     }
 
-    public function createInquiry(array $data): array
+    public function createInquiry(string $templateId, string $referenceId): array
     {
-        // Construct the JSON:API-compliant request payload
-        // See Persona docs: https://docs.withpersona.com/reference/create-an-inquiry
-        // We use inquiry-template-id and let the API key determine the environment.
-        $attributes = array_merge($data, [
-            'inquiry-template-id' => $this->templateId,
-        ]);
+        $response = Http::withBasicAuth($this->apiKey, '')
+            ->post("{$this->baseUrl}/inquiries", [
+                'data' => [
+                    'type' => 'inquiries',
+                    'attributes' => [
+                        'reference-id' => $referenceId,
+                        'inquiry-template-id' => $templateId,
+                    ],
+                ],
+            ]);
 
-        $payload = [
-            'data' => [
-                'type' => 'inquiry',
-                'attributes' => $attributes,
-            ],
-        ];
+        $response->throw();
 
-        // Log the full request details for debugging
-        Log::info('Persona API Request', [
-            'url' => $this->baseUrl . '/inquiries',
-            'template_id' => $this->templateId,
-            'environment_id' => $this->environmentId,
-            'api_key_prefix' => substr($this->apiKey, 0, 10) . '...', // Log partial key for security
-            'payload' => $payload,
-        ]);
-
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $this->apiKey,
-            'Persona-Version' => '2025-10-27',
-            'Content-Type' => 'application/json',
-            'Accept' => 'application/json',
-        ])->post($this->baseUrl . '/inquiries', $payload);
-
-        $responseData = $response->json();
-        
-        Log::info('Persona Inquiry Response', [
-            'status_code' => $response->status(),
-            'response' => $responseData,
-            'headers' => $response->headers(),
-        ]);
-
-        // Check for API errors
-        if ($response->failed() || isset($responseData['errors'])) {
-            $errorMessage = 'Persona API error';
-            if (isset($responseData['errors']) && is_array($responseData['errors']) && !empty($responseData['errors'])) {
-                $errorMessage = $responseData['errors'][0]['title'] ?? $responseData['errors'][0]['detail'] ?? 'Persona API error';
-            }
-            throw new \RuntimeException($errorMessage);
-        }
-
-        return $responseData;
+        return $response->json();
     }
 
     public function resumeInquiry(string $inquiryId): array
     {
-        Log::info('Persona Resume Inquiry Request', [
-            'inquiry_id' => $inquiryId,
-            'url' => $this->baseUrl . '/inquiries/' . $inquiryId . '/resume',
-        ]);
+        $response = Http::withBasicAuth($this->apiKey, '')
+            ->post("{$this->baseUrl}/inquiries/{$inquiryId}/resume");
 
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $this->apiKey,
-            'Persona-Version' => '2025-10-27',
-        ])->post($this->baseUrl . '/inquiries/' . $inquiryId . '/resume');
+        $response->throw();
 
-        $responseData = $response->json();
-
-        Log::info('Persona Resume Inquiry Response', [
-            'status_code' => $response->status(),
-            'response' => $responseData,
-        ]);
-
-        if ($response->failed()) {
-            $errorMessage = $responseData['errors'][0]['title'] ?? 'Failed to resume inquiry';
-            throw new \RuntimeException($errorMessage);
-        }
-
-        return $responseData;
+        return $response->json('data');
     }
 
-    public function cancelInquiry(string $inquiryId): array
+    public function verifyWebhookSignature(array $payload, ?string $signature): bool
     {
-        Log::info('Persona Cancel Inquiry Request', [
-            'inquiry_id' => $inquiryId,
-            'url' => $this->baseUrl . '/inquiries/' . $inquiryId . '/cancel',
-        ]);
+        $secret = config('services.persona.webhook_secret');
+        $signature = $signature ?? '';
 
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $this->apiKey,
-            'Persona-Version' => '2025-10-27',
-        ])->post($this->baseUrl . '/inquiries/' . $inquiryId . '/cancel');
-
-        $responseData = $response->json();
-
-        Log::info('Persona Cancel Inquiry Response', [
-            'status_code' => $response->status(),
-            'response' => $responseData,
-        ]);
-
-        if ($response->failed()) {
-            $errorMessage = $responseData['errors'][0]['title'] ?? 'Failed to cancel inquiry';
-            throw new \RuntimeException($errorMessage);
+        if (!$secret || !$signature) {
+            return false;
         }
 
-        return $responseData;
-    }
+        $payloadJson = json_encode($payload, JSON_UNESCAPED_SLASHES);
+        $expected = hash_hmac('sha256', $payloadJson, $secret);
 
-    public function retrieveInquiry(string $inquiryId): array
-    {
-        Log::info('Persona Retrieve Inquiry Request', [
-            'inquiry_id' => $inquiryId,
-            'url' => $this->baseUrl . '/inquiries/' . $inquiryId,
-        ]);
-
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $this->apiKey,
-            'Persona-Version' => '2025-10-27',
-        ])->get($this->baseUrl . '/inquiries/' . $inquiryId);
-
-        $responseData = $response->json();
-
-        // Log the response for debugging
-        $status = $responseData['data']['attributes']['status'] ?? 'unknown';
-        Log::info('Persona Retrieve Inquiry Response', [
-            'inquiry_id' => $inquiryId,
-            'status_code' => $response->status(),
-            'persona_status' => $status,
-            'has_data' => isset($responseData['data']),
-        ]);
-
-        if ($response->failed()) {
-            $errorMessage = $responseData['errors'][0]['title'] ?? 'Unknown error';
-            Log::error('Persona Retrieve Inquiry Failed', [
-                'inquiry_id' => $inquiryId,
-                'status_code' => $response->status(),
-                'error' => $errorMessage,
-                'response' => $responseData,
-            ]);
-            throw new \RuntimeException('Failed to retrieve inquiry: ' . $errorMessage);
-        }
-
-        return $responseData;
-    }
-
-    /**
-     * Verify that the template exists in the environment
-     * This can help diagnose "Record not found" errors
-     */
-    public function verifyTemplate(): array
-    {
-        try {
-            Log::info('Persona Template Verification Request', [
-                'template_id' => $this->templateId,
-                'url' => $this->baseUrl . '/templates/' . $this->templateId,
-            ]);
-
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $this->apiKey,
-                'Persona-Version' => '2025-10-27',
-            ])->get($this->baseUrl . '/templates/' . $this->templateId);
-
-            $responseData = $response->json();
-            
-            Log::info('Persona Template Verification Response', [
-                'status_code' => $response->status(),
-                'response' => $responseData,
-            ]);
-
-            if ($response->failed()) {
-                throw new \RuntimeException('Template not found: ' . ($responseData['errors'][0]['title'] ?? 'Unknown error'));
-            }
-
-            return $responseData;
-        } catch (\Exception $e) {
-            Log::error('Persona Template Verification Failed', [
-                'template_id' => $this->templateId,
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
-    }
-
-    /**
-     * List all templates to help identify available templates
-     */
-    public function listTemplates(): array
-    {
-        try {
-            Log::info('Persona List Templates Request', [
-                'url' => $this->baseUrl . '/templates',
-            ]);
-
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $this->apiKey,
-                'Persona-Version' => '2025-10-27',
-            ])->get($this->baseUrl . '/templates');
-
-            $responseData = $response->json();
-            
-            Log::info('Persona List Templates Response', [
-                'status_code' => $response->status(),
-                'response' => $responseData,
-            ]);
-
-            return $responseData;
-        } catch (\Exception $e) {
-            Log::error('Persona List Templates Failed', [
-                'error' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
-    }
-
-    public function verifyWebhookSignature(array $payload, string $signature): bool
-    {
-        $calculatedSignature = hash_hmac('sha256', json_encode($payload), config('services.persona.webhook_secret'));
-        return hash_equals($calculatedSignature, $signature);
+        return hash_equals($expected, $signature);
     }
 }
 

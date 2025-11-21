@@ -17,17 +17,14 @@ class KycVerification extends Model
         'verified_at',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'persona_data' => 'array',
-            'verified_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'persona_data' => 'array',
+        'verified_at' => 'datetime',
+    ];
 
-    // Relationships
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 }
+

@@ -6,30 +6,22 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::create('kyc_verifications', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained()->onDelete('cascade');
-            $table->string('persona_inquiry_id')->unique();
-            $table->enum('status', ['pending', 'verified', 'failed', 'expired'])->default('pending');
+            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->string('persona_inquiry_id')->nullable()->unique();
+            $table->enum('status', ['pending', 'failed', 'verified', 'expired'])->nullable();
             $table->json('persona_data')->nullable();
             $table->timestamp('verified_at')->nullable();
             $table->timestamps();
-            
-            $table->index(['user_id', 'status']);
-            $table->index('persona_inquiry_id');
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::dropIfExists('kyc_verifications');
     }
 };
+
