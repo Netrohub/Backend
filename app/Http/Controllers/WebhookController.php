@@ -116,6 +116,7 @@ class WebhookController extends Controller
             // Update user verification status
             $user = $kyc->user;
             $user->is_verified = true;
+            $this->assignPhoneNumberFromPayload($user, $payload);
             $user->save();
             
             // Send verification notification
@@ -130,6 +131,33 @@ class WebhookController extends Controller
         $kyc->save();
 
         return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+    }
+
+    private function assignPhoneNumberFromPayload(User $user, array $payload): void
+    {
+        $phone = $this->extractPhoneNumberFromPayload($payload);
+        if (!$phone) {
+            return;
+        }
+
+        if ($user->phone === $phone) {
+            return;
+        }
+
+        $user->phone = $phone;
+    }
+
+    private function extractPhoneNumberFromPayload(array $payload): ?string
+    {
+        $fields = $payload['data']['attributes']['fields'] ?? [];
+        $phoneValue = $fields['phone_number']['value'] ?? null;
+
+        if (!is_string($phoneValue)) {
+            return null;
+        }
+
+        $phone = trim($phoneValue);
+        return $phone === '' ? null : $phone;
     }
 
     /**
