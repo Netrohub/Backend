@@ -360,6 +360,62 @@ class KycController extends Controller
     }
 
     /**
+     * Resume a pending Persona inquiry and return a session token
+     */
+    public function resume(Request $request)
+    {
+        $user = $request->user();
+        $inquiryId = $request->input('inquiry_id');
+
+        $kyc = null;
+        if ($inquiryId) {
+            $kyc = KycVerification::where('persona_inquiry_id', $inquiryId)->first();
+        }
+
+        if (!$kyc) {
+            $kyc = KycVerification::where('user_id', $user->id)->first();
+        }
+
+        if (!$kyc || !$kyc->persona_inquiry_id) {
+            return response()->json([
+                'message' => 'No KYC inquiry found. Please start verification first.',
+            ], 404);
+        }
+
+        try {
+            $personaResponse = $this->personaService->resumeInquiry($kyc->persona_inquiry_id);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Persona resume error', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'message' => 'Failed to resume inquiry',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+
+        $sessionToken = $personaResponse['meta']['session-token'] ?? null;
+
+        if (!$sessionToken) {
+            \Illuminate\Support\Facades\Log::error('Persona resume missing session token', [
+                'user_id' => $user->id,
+                'inquiry_id' => $kyc->persona_inquiry_id,
+                'response' => $personaResponse,
+            ]);
+            return response()->json([
+                'message' => 'Session token not returned from Persona',
+            ], 500);
+        }
+
+        return response()->json([
+            'session_token' => $sessionToken,
+            'inquiry_id' => $kyc->persona_inquiry_id,
+        ]);
+    }
+
+    /**
      * Diagnostic endpoint to verify Persona configuration
      * This helps troubleshoot "Record not found" errors
      */

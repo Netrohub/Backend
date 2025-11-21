@@ -88,6 +88,33 @@ class PersonaService
         return $responseData;
     }
 
+    public function resumeInquiry(string $inquiryId): array
+    {
+        Log::info('Persona Resume Inquiry Request', [
+            'inquiry_id' => $inquiryId,
+            'url' => $this->baseUrl . '/inquiries/' . $inquiryId . '/resume',
+        ]);
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->apiKey,
+            'Persona-Version' => '2025-10-27',
+        ])->post($this->baseUrl . '/inquiries/' . $inquiryId . '/resume');
+
+        $responseData = $response->json();
+
+        Log::info('Persona Resume Inquiry Response', [
+            'status_code' => $response->status(),
+            'response' => $responseData,
+        ]);
+
+        if ($response->failed()) {
+            $errorMessage = $responseData['errors'][0]['title'] ?? 'Failed to resume inquiry';
+            throw new \RuntimeException($errorMessage);
+        }
+
+        return $responseData;
+    }
+
     public function retrieveInquiry(string $inquiryId): array
     {
         Log::info('Persona Retrieve Inquiry Request', [
