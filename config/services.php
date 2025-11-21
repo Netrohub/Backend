@@ -49,7 +49,8 @@ return [
         'template_id' => env('PERSONA_TEMPLATE_ID'),
         'environment_id' => env('PERSONA_ENVIRONMENT_ID'),
         'webhook_secret' => env('PERSONA_WEBHOOK_SECRET'),
-        'base_url' => env('PERSONA_BASE_URL', 'https://withpersona.com/api/v1'),
+        // Use official API hostname; path /api/v1 is appended in the service
+        'base_url' => env('PERSONA_BASE_URL', 'https://api.withpersona.com/api/v1'),
     ],
 
     'cloudflare' => [

@@ -38,11 +38,19 @@ class PersonaService
 
     public function createInquiry(array $data): array
     {
-        // Construct the full request payload
-        $payload = array_merge([
-            'template-id' => $this->templateId,
-            'environment-id' => $this->environmentId,
-        ], $data);
+        // Construct the JSON:API-compliant request payload
+        // See Persona docs: https://docs.withpersona.com/reference/create-an-inquiry
+        // We use inquiry-template-id and let the API key determine the environment.
+        $attributes = array_merge($data, [
+            'inquiry-template-id' => $this->templateId,
+        ]);
+
+        $payload = [
+            'data' => [
+                'type' => 'inquiry',
+                'attributes' => $attributes,
+            ],
+        ];
 
         // Log the full request details for debugging
         Log::info('Persona API Request', [
