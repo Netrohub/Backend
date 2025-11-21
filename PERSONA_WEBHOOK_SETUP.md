@@ -19,9 +19,9 @@ The webhook route is at `/api/v1/webhook/persona` (see `backend/routes/api.php` 
 ### 2. ⚠️ API Version Mismatch
 
 **Persona Dashboard Shows:** `2023-01-05`  
-**Code Uses:** `2024-02-05`
+**Code Uses:** `2025-10-27`
 
-**Fix:** Update Persona webhook API version to `2024-02-05` to match the code, OR update the code to use `2023-01-05`.
+**Fix:** Update Persona webhook API version to `2025-10-27` to match the code.
 
 ### 3. ✅ Events Look Good
 
@@ -43,8 +43,7 @@ The enabled events are correct:
    - Click "Save"
 
 2. **Update API Version:**
-   - In Persona dashboard, change API version from `2023-01-05` to `2024-02-05`
-   - OR update `PersonaService.php` line 43 to use `2023-01-05`
+   - In Persona dashboard, change API version from `2023-01-05` to `2025-10-27`
 
 3. **Copy Webhook Secret:**
    - Click the eye icon to reveal the webhook secret

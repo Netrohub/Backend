@@ -55,7 +55,7 @@ class PersonaService
 
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->apiKey,
-            'Persona-Version' => '2024-02-05',
+            'Persona-Version' => '2025-10-27',
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
         ])->post($this->baseUrl . '/inquiries', $payload);
@@ -89,7 +89,7 @@ class PersonaService
 
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->apiKey,
-            'Persona-Version' => '2024-02-05',
+            'Persona-Version' => '2025-10-27',
         ])->get($this->baseUrl . '/inquiries/' . $inquiryId);
 
         $responseData = $response->json();
@@ -131,7 +131,7 @@ class PersonaService
 
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
-                'Persona-Version' => '2024-02-05',
+                'Persona-Version' => '2025-10-27',
             ])->get($this->baseUrl . '/templates/' . $this->templateId);
 
             $responseData = $response->json();
@@ -167,7 +167,7 @@ class PersonaService
 
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
-                'Persona-Version' => '2024-02-05',
+                'Persona-Version' => '2025-10-27',
             ])->get($this->baseUrl . '/templates');
 
             $responseData = $response->json();
