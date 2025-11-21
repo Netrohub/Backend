@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\App;
 use Symfony\Component\HttpFoundation\Response;
 
 class SecurityHeaders
@@ -20,7 +21,7 @@ class SecurityHeaders
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(self https://inquiry.withpersona.com), camera=(self https://inquiry.withpersona.com)');
 
-        if (config('app.env') === 'production') {
+        if (!App::environment('local', 'testing')) {
             $response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
             // CSP allows GTM and necessary external resources
             // Note: CSP connect-src must allow the frontend domain for API calls
