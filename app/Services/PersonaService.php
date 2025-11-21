@@ -41,7 +41,7 @@ class PersonaService
         // Construct the full request payload
         $payload = array_merge([
             'template-id' => $this->templateId,
-            'environment' => $this->environmentId,
+            'environment-id' => $this->environmentId,
         ], $data);
 
         // Log the full request details for debugging
