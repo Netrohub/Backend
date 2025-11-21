@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class PersonaService
@@ -17,6 +18,20 @@ class PersonaService
         if (empty($this->apiKey)) {
             throw new RuntimeException('Persona API key is not configured.');
         }
+
+        Log::info('PersonaService initialized', [
+            'api_key_present' => (bool) $this->apiKey,
+            'masked_api_key' => $this->maskApiKey($this->apiKey),
+        ]);
+    }
+
+    private function maskApiKey(string $key): string
+    {
+        if (strlen($key) <= 6) {
+            return str_repeat('*', strlen($key));
+        }
+
+        return substr($key, 0, 3) . str_repeat('*', strlen($key) - 6) . substr($key, -3);
     }
 
     public function createInquiry(string $templateId, string $referenceId): array
