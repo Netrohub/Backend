@@ -93,19 +93,40 @@ class KycController extends Controller
             return response()->json(['message' => 'Failed to create KYC inquiry'], 500);
         }
 
+        $inquiryId = $personaResponse['data']['id'];
+
+        $additionalPersonaData = null;
+        $inquiryUrl = $personaResponse['data']['attributes']['inquiry-url'] ?? null;
+
+        try {
+            $additionalPersonaData = $this->personaService->retrieveInquiry($inquiryId);
+            $inquiryUrl = $inquiryUrl
+                ?? $additionalPersonaData['data']['attributes']['inquiry-url']
+                ?? $additionalPersonaData['data']['attributes']['inquiry_url']
+                ?? null;
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Persona verify (post-create) request failed', [
+                'user_id' => $user->id,
+                'inquiry_id' => $inquiryId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        $personaData = $additionalPersonaData ?? $personaResponse;
+
         // Create or update KYC record
         $kyc = KycVerification::updateOrCreate(
             ['user_id' => $user->id],
             [
-                'persona_inquiry_id' => $personaResponse['data']['id'],
+                'persona_inquiry_id' => $inquiryId,
                 'status' => 'pending',
-                'persona_data' => $personaResponse,
+                'persona_data' => $personaData,
             ]
         );
 
         return response()->json([
             'kyc' => $kyc,
-            'inquiry_url' => $personaResponse['data']['attributes']['inquiry-url'] ?? null,
+            'inquiry_url' => $inquiryUrl,
         ], 201);
     }
 
