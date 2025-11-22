@@ -11,12 +11,14 @@ class MemberController extends Controller
 {
     public function index(Request $request)
     {
-        // Cache member list for 10 minutes (first page only)
+        // Allow higher per_page for members list (up to 1000 to get all members)
         $page = $request->get('page', 1);
-        $cacheKey = 'members_list_page_' . $page;
+        $perPage = min((int)($request->get('per_page', 20)), 1000); // Allow up to 1000 per page
+        $cacheKey = 'members_list_page_' . $page . '_per_page_' . $perPage;
         
-        if ($page === 1) {
-            $members = Cache::remember($cacheKey, 600, function () use ($request) {
+        if ($page === 1 && $perPage <= 100) {
+            // Cache only for reasonable page sizes to avoid cache bloat
+            $members = Cache::remember($cacheKey, 600, function () use ($request, $perPage) {
                 return PaginationHelper::paginate(
                     User::where(function($query) {
                             $query->where('is_verified', true)
@@ -25,7 +27,9 @@ class MemberController extends Controller
                         ->where('role', 'user')
                         ->select('id', 'name', 'avatar', 'bio', 'created_at')
                         ->orderBy('created_at', 'desc'),
-                    $request
+                    $request,
+                    $perPage, // Use custom per_page
+                    1000 // Max per_page allowed
                 );
             });
         } else {
@@ -37,7 +41,9 @@ class MemberController extends Controller
                     ->where('role', 'user')
                     ->select('id', 'name', 'avatar', 'bio', 'created_at')
                     ->orderBy('created_at', 'desc'),
-                $request
+                $request,
+                $perPage, // Use custom per_page
+                1000 // Max per_page allowed
             );
         }
 
