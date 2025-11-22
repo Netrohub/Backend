@@ -174,36 +174,108 @@ class PersonaKycHandler
                     $user->phone_verified_at = now();
                     $userChanged = true;
                     $changes['phone_verified_at'] = now()->toIso8601String();
+                    
+                    Log::info('PersonaKycHandler: Phone number extracted and will be saved', [
+                        'user_id' => $user->id,
+                        'inquiry_id' => $inquiryId,
+                        'phone' => $phone,
+                    ]);
                 } else {
                     Log::warning('PersonaKycHandler: Phone number failed sanitization', [
-                        'raw_phone' => $payload['data']['attributes']['fields']['phone_number']['value'] ?? null,
+                        'raw_phone' => $this->extractPhoneNumber($payload),
+                        'user_id' => $user->id,
+                        'inquiry_id' => $inquiryId,
                     ]);
                 }
+            } else {
+                $hasData = isset($payload['data']);
+                $hasAttributes = isset($payload['data']['attributes']);
+                $hasFields = isset($payload['data']['attributes']['fields']);
+                $hasNestedFields = isset($payload['data']['attributes']['payload']['data']['attributes']['fields']);
+                
+                Log::info('PersonaKycHandler: No phone number in payload', [
+                    'user_id' => $user->id,
+                    'inquiry_id' => $inquiryId,
+                    'payload_structure' => [
+                        'has_data' => $hasData,
+                        'has_attributes' => $hasAttributes,
+                        'has_fields' => $hasFields,
+                        'has_nested_fields' => $hasNestedFields,
+                    ],
+                ]);
             }
 
             if ($userChanged) {
-                $user->save();
-                
-                // Audit log for KYC status changes
-                if (isset($changes['kyc_status'])) {
-                    AuditHelper::log(
-                        'kyc.status_changed',
-                        User::class,
-                        $user->id,
-                        ['kyc_status' => $oldStatus],
-                        ['kyc_status' => $kyc->status, 'inquiry_id' => $inquiryId, 'webhook_event_id' => $webhookEventId],
-                        null,
-                        $user->id
-                    );
-                }
+                try {
+                    $saved = $user->save();
+                    if (!$saved) {
+                        Log::error('PersonaKycHandler: User save returned false', [
+                            'user_id' => $user->id,
+                            'inquiry_id' => $inquiryId,
+                            'changes' => $changes,
+                            'user_attributes' => $user->getAttributes(),
+                        ]);
+                        throw new \Exception('Failed to save user KYC status - save() returned false');
+                    }
+                    
+                    // Verify the save actually persisted by refreshing and checking
+                    $user->refresh();
+                    if ($user->kyc_status !== $kyc->status) {
+                        Log::error('PersonaKycHandler: User save did not persist kyc_status', [
+                            'user_id' => $user->id,
+                            'inquiry_id' => $inquiryId,
+                            'expected_status' => $kyc->status,
+                            'actual_status' => $user->kyc_status,
+                        ]);
+                        throw new \Exception('User save did not persist kyc_status correctly');
+                    }
+                    
+                    Log::info('PersonaKycHandler: User saved successfully', [
+                        'user_id' => $user->id,
+                        'inquiry_id' => $inquiryId,
+                        'kyc_status' => $user->kyc_status,
+                        'is_verified' => $user->is_verified,
+                        'has_verified_phone' => !is_null($user->verified_phone),
+                        'verified_phone' => $user->verified_phone,
+                    ]);
+                    
+                    // Audit log for KYC status changes
+                    if (isset($changes['kyc_status'])) {
+                        AuditHelper::log(
+                            'kyc.status_changed',
+                            User::class,
+                            $user->id,
+                            ['kyc_status' => $oldStatus],
+                            ['kyc_status' => $kyc->status, 'inquiry_id' => $inquiryId, 'webhook_event_id' => $webhookEventId],
+                            null,
+                            $user->id
+                        );
+                    }
 
-                Log::info('PersonaKycHandler: User updated', [
+                    Log::info('PersonaKycHandler: User updated', [
+                        'user_id' => $user->id,
+                        'inquiry_id' => $inquiryId,
+                        'kyc_status' => $user->kyc_status,
+                        'is_verified' => $user->is_verified,
+                        'has_verified_phone' => !is_null($user->verified_phone),
+                        'changes' => $changes,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('PersonaKycHandler: Exception saving user', [
+                        'user_id' => $user->id,
+                        'inquiry_id' => $inquiryId,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                        'changes' => $changes,
+                    ]);
+                    throw $e; // Re-throw to trigger transaction rollback
+                }
+            } else {
+                Log::debug('PersonaKycHandler: User not changed, skipping save', [
                     'user_id' => $user->id,
                     'inquiry_id' => $inquiryId,
-                    'kyc_status' => $user->kyc_status,
-                    'is_verified' => $user->is_verified,
-                    'has_verified_phone' => !is_null($user->verified_phone),
-                    'changes' => $changes,
+                    'current_kyc_status' => $user->kyc_status,
+                    'kyc_status' => $kyc->status,
                 ]);
             }
 
