@@ -2,12 +2,19 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\KycVerification;
-use Illuminate\Http\Request;
+use App\Services\PersonaKycHandler;
+use App\Services\PersonaService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class KycController extends Controller
 {
+    public function __construct(
+        private PersonaService $personaService,
+        private PersonaKycHandler $kycHandler
+    ) {}
+
     public function status(Request $request): JsonResponse
     {
         $kyc = $request->user()->kycVerification;
@@ -34,31 +41,37 @@ class KycController extends Controller
             'userId' => 'required|integer',
         ]);
 
-        if ((int)$validated['userId'] !== $user->id) {
+        if ((int) $validated['userId'] !== $user->id) {
             return response()->json([
                 'message' => 'User mismatch',
             ], 403);
         }
 
-        $kyc = KycVerification::updateOrCreate(
-            ['user_id' => $user->id],
-            [
-                'persona_inquiry_id' => $validated['inquiryId'],
-                'status' => 'pending',
-            ]
-        );
+        try {
+            $payload = $this->personaService->getInquiry($validated['inquiryId']);
+        } catch (\Throwable $e) {
+            Log::warning('KYC complete: Unable to fetch inquiry details', [
+                'user_id' => $user->id,
+                'inquiry_id' => $validated['inquiryId'],
+                'error' => $e->getMessage(),
+            ]);
+            $payload = null;
+        }
 
-        $existingData = $kyc->persona_data ?? [];
-        $existingData['client_payload'] = [
-            'status' => $validated['status'],
-            'submitted_at' => now()->toIso8601String(),
-            'user_id' => $user->id,
-        ];
-        $existingData['client_reference_id'] = "user_{$user->id}";
-        $existingData['last_client_update_at'] = now()->toIso8601String();
+        $kyc = $payload
+            ? $this->kycHandler->processPayload($payload)
+            : $this->kycHandler->processPayload([
+                'data' => [
+                    'type' => 'inquiry',
+                    'id' => $validated['inquiryId'],
+                    'attributes' => [
+                        'status' => $validated['status'],
+                        'reference-id' => "user_{$user->id}",
+                    ],
+                ],
+            ]);
 
-        $kyc->persona_data = $existingData;
-        $kyc->save();
+        $kyc ??= $user->kycVerification;
 
         return response()->json([
             'kyc' => $kyc,

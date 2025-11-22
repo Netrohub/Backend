@@ -5,13 +5,12 @@ namespace App\Http\Controllers;
 use App\Jobs\ReleaseEscrowFunds;
 use App\Models\Order;
 use App\Models\Payment;
-use App\Models\KycVerification;
-use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
 use App\Services\TapPaymentService;
 use App\Services\PaylinkClient;
 use App\Services\PersonaService;
+use App\Services\PersonaKycHandler;
 use App\Notifications\PaymentConfirmed;
 use App\Notifications\OrderStatusChanged;
 use Illuminate\Http\Request;
@@ -25,7 +24,8 @@ class WebhookController extends Controller
     public function __construct(
         private TapPaymentService $tapService,
         private PaylinkClient $paylinkClient,
-        private PersonaService $personaService
+        private PersonaService $personaService,
+        private PersonaKycHandler $kycHandler
     ) {}
 
     /**
@@ -61,104 +61,13 @@ class WebhookController extends Controller
             }
         }
 
-        $inquiryId = $payload['data']['id'] ?? null;
-        $status = $payload['data']['attributes']['status'] ?? null;
-        $referenceId = $payload['data']['attributes']['reference-id'] ?? null;
+        $processed = $this->kycHandler->processPayload($payload);
 
-        if (!$inquiryId) {
-            return response()->json(['message' => MessageHelper::WEBHOOK_INVALID_PAYLOAD], 400);
-        }
-
-        // Try to find existing KYC record
-        $kyc = KycVerification::where('persona_inquiry_id', $inquiryId)->first();
-
-        // If KYC doesn't exist, try to create it from reference-id
-        // Reference ID format: "user_{user_id}"
-        if (!$kyc && $referenceId && str_starts_with($referenceId, 'user_')) {
-            $userId = (int) str_replace('user_', '', $referenceId);
-            if ($userId > 0) {
-                $user = User::find($userId);
-                if ($user) {
-                    // Create KYC record for this inquiry
-                    $kyc = KycVerification::create([
-                        'user_id' => $userId,
-                        'persona_inquiry_id' => $inquiryId,
-                        'status' => 'pending',
-                        'persona_data' => $payload,
-                    ]);
-                    Log::info('Persona Webhook: Created KYC record from inquiry', [
-                        'inquiry_id' => $inquiryId,
-                        'user_id' => $userId,
-                    ]);
-                }
-            }
-        }
-
-        if (!$kyc) {
-            Log::warning('Persona Webhook: KYC not found and could not create', [
-                'inquiry_id' => $inquiryId,
-                'reference_id' => $referenceId,
-            ]);
+        if (!$processed) {
             return response()->json(['message' => MessageHelper::WEBHOOK_KYC_NOT_FOUND], 404);
         }
 
-        // Update KYC status
-        $kyc->status = match ($status) {
-            'completed', 'completed.approved' => 'verified',
-            'completed.declined' => 'failed',
-            'failed', 'canceled' => 'failed',
-            'expired' => 'expired',
-            default => 'pending',
-        };
-
-        if ($kyc->status === 'verified') {
-            $kyc->verified_at = now();
-            
-            // Update user verification status
-            $user = $kyc->user;
-            $user->is_verified = true;
-            $this->assignPhoneNumberFromPayload($user, $payload);
-            $user->save();
-            
-            // Send verification notification
-            $user->notify(new \App\Notifications\KycVerified($kyc, true));
-        } elseif ($kyc->status === 'failed' || $kyc->status === 'expired') {
-            // Send notification for failed/expired KYC
-            $user = $kyc->user;
-            $user->notify(new \App\Notifications\KycVerified($kyc, false));
-        }
-
-        $kyc->persona_data = array_merge($kyc->persona_data ?? [], $payload);
-        $kyc->save();
-
         return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
-    }
-
-    private function assignPhoneNumberFromPayload(User $user, array $payload): void
-    {
-        $phone = $this->extractPhoneNumberFromPayload($payload);
-        if (!$phone) {
-            return;
-        }
-
-        if ($user->phone === $phone) {
-            return;
-        }
-
-        $user->phone = $phone;
-    }
-
-    private function extractPhoneNumberFromPayload(array $payload): ?string
-    {
-        $fields = $payload['data']['attributes']['fields'] ?? [];
-        $phoneValue = $fields['phone_number']['value'] ?? null;
-
-        if (!is_string($phoneValue)) {
-            return null;
-        }
-
-        $phone = trim($phoneValue);
-        return $phone === '' ? null : $phone;
     }
 
     /**

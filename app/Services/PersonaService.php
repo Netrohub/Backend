@@ -62,6 +62,16 @@ class PersonaService
         return $response->json('data');
     }
 
+    public function getInquiry(string $inquiryId): array
+    {
+        $response = Http::withBasicAuth($this->apiKey, '')
+            ->get("{$this->baseUrl}/inquiries/{$inquiryId}");
+
+        $response->throw();
+
+        return $response->json();
+    }
+
     public function verifyWebhookSignature(array $payload, ?string $signature): bool
     {
         $secret = config('services.persona.webhook_secret');
