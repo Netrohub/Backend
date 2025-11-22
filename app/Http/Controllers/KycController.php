@@ -75,42 +75,70 @@ class KycController extends Controller
             $payload = null;
         }
 
-        // Process payload (with or without Persona API data)
-        $kyc = $payload
-            ? $this->kycHandler->processPayload($payload)
-            : $this->kycHandler->processPayload([
-                'data' => [
-                    'type' => 'inquiry',
-                    'id' => $validated['inquiryId'],
-                    'attributes' => [
-                        'status' => $validated['status'],
-                        'reference-id' => "user_{$user->id}",
+        try {
+            // Process payload (with or without Persona API data)
+            $kyc = $payload
+                ? $this->kycHandler->processPayload($payload)
+                : $this->kycHandler->processPayload([
+                    'data' => [
+                        'type' => 'inquiry',
+                        'id' => $validated['inquiryId'],
+                        'attributes' => [
+                            'status' => $validated['status'],
+                            'reference-id' => "user_{$user->id}",
+                        ],
                     ],
-                ],
+                ]);
+
+            if (!$kyc) {
+                Log::error('KYC complete: processPayload returned null', [
+                    'user_id' => $user->id,
+                    'inquiry_id' => $validated['inquiryId'],
+                    'has_payload' => !empty($payload),
+                ]);
+                return response()->json([
+                    'message' => 'Failed to process KYC completion',
+                    'error' => 'KYC processing returned null',
+                ], 500);
+            }
+
+            $kyc ??= $user->kycVerification;
+
+            // Reload user to get latest status
+            $user->refresh();
+
+            Log::info('KYC complete: Processing finished', [
+                'user_id' => $user->id,
+                'inquiry_id' => $validated['inquiryId'],
+                'kyc_id' => $kyc?->id,
+                'kyc_status' => $kyc?->status,
+                'user_kyc_status' => $user->kyc_status,
+                'user_is_verified' => $user->is_verified,
             ]);
 
-        $kyc ??= $user->kycVerification;
+            return response()->json([
+                'kyc' => $kyc,
+                'user' => [
+                    'is_verified' => $user->is_verified,
+                    'kyc_status' => $user->kyc_status,
+                    'has_completed_kyc' => $user->has_completed_kyc,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('KYC complete: Exception during processing', [
+                'user_id' => $user->id,
+                'inquiry_id' => $validated['inquiryId'] ?? null,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
-        // Reload user to get latest status
-        $user->refresh();
-
-        Log::info('KYC complete: Processing finished', [
-            'user_id' => $user->id,
-            'inquiry_id' => $validated['inquiryId'],
-            'kyc_id' => $kyc?->id,
-            'kyc_status' => $kyc?->status,
-            'user_kyc_status' => $user->kyc_status,
-            'user_is_verified' => $user->is_verified,
-        ]);
-
-        return response()->json([
-            'kyc' => $kyc,
-            'user' => [
-                'is_verified' => $user->is_verified,
-                'kyc_status' => $user->kyc_status,
-                'has_completed_kyc' => $user->has_completed_kyc,
-            ],
-        ]);
+            return response()->json([
+                'message' => 'An error occurred while processing KYC completion',
+                'error' => app()->environment('production') ? 'Internal server error' : $e->getMessage(),
+            ], 500);
+        }
     }
 }
 

@@ -29,10 +29,10 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware(['auth:sanctum', 'throttle:10,60'])->post('/kyc/complete', [KycController::class, 'complete']);
-
 // API Version 1 routes
 Route::prefix('v1')->group(function () {
+    // KYC routes
+    Route::middleware(['auth:sanctum', 'throttle:10,60'])->post('/kyc/complete', [KycController::class, 'complete']);
     // Public routes with rate limiting for authentication endpoints
     Route::middleware('throttle:5,1')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
