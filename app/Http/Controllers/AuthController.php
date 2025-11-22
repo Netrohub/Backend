@@ -237,7 +237,30 @@ class AuthController extends Controller
     {
         $user = $request->user()->load(['wallet', 'kycVerification']);
         
-        return response()->json($user);
+        // Ensure user data includes KYC status fields
+        $user->refresh(); // Get latest from DB
+        
+        return response()->json([
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'verified_phone' => $user->verified_phone,
+            'phone_verified' => $user->phone_verified,
+            'role' => $user->role,
+            'is_verified' => $user->is_verified,
+            'kyc_status' => $user->kyc_status,
+            'has_completed_kyc' => $user->has_completed_kyc,
+            'kyc_verified_at' => $user->kyc_verified_at?->toIso8601String(),
+            'phone_verified_at' => $user->phone_verified_at?->toIso8601String(),
+            'avatar' => $user->avatar,
+            'bio' => $user->bio,
+            'email_verified_at' => $user->email_verified_at?->toIso8601String(),
+            'created_at' => $user->created_at->toIso8601String(),
+            'updated_at' => $user->updated_at->toIso8601String(),
+            'wallet' => $user->wallet,
+            'kyc_verification' => $user->kycVerification,
+        ]);
     }
 
     /**

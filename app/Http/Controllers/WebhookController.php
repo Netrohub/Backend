@@ -48,25 +48,70 @@ class WebhookController extends Controller
     public function persona(Request $request)
     {
         $payload = $request->all();
+        $eventId = $payload['data']['id'] ?? null; // Persona event ID for replay protection
+        $eventName = $payload['data']['attributes']['name'] ?? null;
         
-        Log::info('Persona Webhook Received', ['payload' => $payload]);
+        Log::info('Persona Webhook Received', [
+            'event_id' => $eventId,
+            'event_name' => $eventName,
+            'payload_structure' => [
+                'has_data' => isset($payload['data']),
+                'has_attributes' => isset($payload['data']['attributes']),
+                'has_payload' => isset($payload['data']['attributes']['payload']),
+            ],
+        ]);
 
         // Verify webhook signature if configured
         if (config('services.persona.webhook_secret')) {
             $signature = $request->header('X-Persona-Signature');
             if (!$this->personaService->verifyWebhookSignature($payload, $signature)) {
-                Log::warning('Persona Webhook Signature Invalid');
+                Log::warning('Persona Webhook Signature Invalid', [
+                    'event_id' => $eventId,
+                    'has_signature' => !empty($signature),
+                ]);
                 return response()->json(['message' => MessageHelper::WEBHOOK_INVALID_SIGNATURE], 401);
             }
         }
 
-        $processed = $this->kycHandler->processPayload($payload);
-
-        if (!$processed) {
-            return response()->json(['message' => MessageHelper::WEBHOOK_KYC_NOT_FOUND], 404);
+        // Filter events - only process inquiry-related events
+        $allowedEvents = ['inquiry.completed', 'inquiry.failed', 'inquiry.canceled', 'inquiry.expired'];
+        if ($eventName && !in_array($eventName, $allowedEvents, true)) {
+            Log::info('Persona Webhook: Ignoring event', [
+                'event_name' => $eventName,
+                'event_id' => $eventId,
+            ]);
+            return response()->json(['message' => 'Event ignored'], 200);
         }
 
-        return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+        try {
+            $processed = $this->kycHandler->processPayload($payload, $eventId);
+
+            if (!$processed) {
+                Log::warning('Persona Webhook: Processing failed', [
+                    'event_id' => $eventId,
+                    'event_name' => $eventName,
+                ]);
+                return response()->json(['message' => MessageHelper::WEBHOOK_KYC_NOT_FOUND], 404);
+            }
+
+            Log::info('Persona Webhook: Successfully processed', [
+                'event_id' => $eventId,
+                'event_name' => $eventName,
+                'kyc_id' => $processed->id,
+                'kyc_status' => $processed->status,
+                'user_id' => $processed->user_id,
+            ]);
+
+            return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+        } catch (\Throwable $e) {
+            Log::error('Persona Webhook: Processing error', [
+                'event_id' => $eventId,
+                'event_name' => $eventName,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json(['message' => 'Webhook processing failed'], 500);
+        }
     }
 
     /**

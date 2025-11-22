@@ -29,7 +29,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware('auth:sanctum')->post('/kyc/complete', [KycController::class, 'complete']);
+Route::middleware(['auth:sanctum', 'throttle:10,60'])->post('/kyc/complete', [KycController::class, 'complete']);
 
 // API Version 1 routes
 Route::prefix('v1')->group(function () {

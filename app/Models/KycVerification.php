@@ -15,11 +15,14 @@ class KycVerification extends Model
         'status',
         'persona_data',
         'verified_at',
+        'webhook_processed_at',
+        'last_webhook_event_id',
     ];
 
     protected $casts = [
         'persona_data' => 'array',
         'verified_at' => 'datetime',
+        'webhook_processed_at' => 'datetime',
     ];
 
     public function user()
