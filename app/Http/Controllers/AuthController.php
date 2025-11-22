@@ -36,9 +36,28 @@ class AuthController extends Controller
                 'phone' => 'nullable|string|max:20',
             ]);
 
+            // Generate unique username from name
+            $baseUsername = $validated['name'];
+            $username = $baseUsername;
+            $counter = 1;
+            
+            // Check if username exists and append number if needed
+            while (User::where('username', $username)->exists()) {
+                $username = $baseUsername . $counter;
+                $counter++;
+                
+                // Prevent infinite loop (max 9999 attempts)
+                if ($counter > 9999) {
+                    // Fallback: use email prefix + random number
+                    $emailPrefix = explode('@', $validated['email'])[0];
+                    $username = $emailPrefix . rand(1000, 9999);
+                    break;
+                }
+            }
+
             $user = User::create([
                 'name' => $validated['name'],
-                'username' => $validated['name'], // Set username from name (migration will handle existing users)
+                'username' => $username, // Unique username generated from name
                 'email' => strtolower($validated['email']), // Store email in lowercase
                 'password' => Hash::make($validated['password']),
                 'phone' => $validated['phone'] ?? null,
