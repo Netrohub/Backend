@@ -103,9 +103,10 @@ class WebhookController extends Controller
         }
 
         // Update KYC status
-        $kyc->status = match($status) {
-            'completed.approved' => 'verified',
+        $kyc->status = match ($status) {
+            'completed', 'completed.approved' => 'verified',
             'completed.declined' => 'failed',
+            'failed', 'canceled' => 'failed',
             'expired' => 'expired',
             default => 'pending',
         };

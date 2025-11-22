@@ -22,14 +22,14 @@ use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
-| API Routes - Version 1
+| API Routes
 |--------------------------------------------------------------------------
 |
-| All API routes are versioned under /api/v1/ prefix.
-| This allows for future API versions (v2, v3, etc.) without breaking
-| existing clients.
+| Public webhooks and versioned API routes live here.
 |
 */
+
+Route::middleware('auth:sanctum')->post('/kyc/complete', [KycController::class, 'complete']);
 
 // API Version 1 routes
 Route::prefix('v1')->group(function () {
@@ -71,7 +71,6 @@ Route::prefix('v1')->group(function () {
     // Rate limit: 60 requests per minute per IP to prevent DoS attacks
     Route::middleware('throttle:60,1')->group(function () {
         Route::post('/webhook/paylink', [WebhookController::class, 'paylink']);
-        Route::post('/webhook/persona', [WebhookController::class, 'persona']);
         // Tap transfer webhook (still used for withdrawals)
         Route::post('/webhook/tap/transfer', [WebhookController::class, 'tapTransfer']);
     });
@@ -80,7 +79,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/tiktok/callback', [\App\Http\Controllers\TikTokController::class, 'callback']);
 
     // Protected routes
-    Route::middleware('auth:sanctum')->group(function () {
+        Route::middleware('auth:sanctum')->group(function () {
         // Auth
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/user', [AuthController::class, 'user']);
@@ -103,7 +102,6 @@ Route::prefix('v1')->group(function () {
         });
         
         Route::prefix('kyc')->middleware('throttle:30,1')->group(function () {
-            Route::post('/start', [KycController::class, 'start']);
             Route::get('/status', [KycController::class, 'status']);
         });
 
