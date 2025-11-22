@@ -21,7 +21,7 @@ class AuditDatabase extends Command
         $duplicateEmails = DB::table('users')
             ->select('email', DB::raw('count(*) as count'))
             ->groupBy('email')
-            ->having('count', '>', 1)
+            ->havingRaw('count(*) > 1')
             ->get();
         
         if ($duplicateEmails->count() > 0) {
@@ -90,7 +90,7 @@ class AuditDatabase extends Command
             ->select('user_id', 'title', DB::raw('count(*) as count'))
             ->where('created_at', '>', now()->subHours(24))
             ->groupBy('user_id', 'title')
-            ->having('count', '>', 1)
+            ->havingRaw('count(*) > 1')
             ->get();
         
         if ($duplicateListings->count() > 0) {
