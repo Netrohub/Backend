@@ -9,8 +9,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('kyc_verifications', function (Blueprint $table) {
-            $table->timestamp('webhook_processed_at')->nullable()->after('verified_at');
-            $table->string('last_webhook_event_id')->nullable()->after('webhook_processed_at');
+            // PostgreSQL doesn't support ->after(), columns will be added at the end
+            $table->timestamp('webhook_processed_at')->nullable();
+            $table->string('last_webhook_event_id')->nullable();
             $table->index('webhook_processed_at');
         });
     }

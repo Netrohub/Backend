@@ -9,12 +9,13 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->string('persona_inquiry_id')->nullable()->after('phone')->unique();
-            $table->string('persona_reference_id')->nullable()->after('persona_inquiry_id');
-            $table->enum('kyc_status', ['pending', 'verified', 'failed', 'expired', 'canceled', 'review'])->default('pending')->after('persona_reference_id');
-            $table->timestamp('kyc_verified_at')->nullable()->after('kyc_status');
-            $table->string('verified_phone')->nullable()->after('kyc_verified_at');
-            $table->timestamp('phone_verified_at')->nullable()->after('verified_phone');
+            // PostgreSQL doesn't support ->after(), columns will be added at the end
+            $table->string('persona_inquiry_id')->nullable()->unique();
+            $table->string('persona_reference_id')->nullable();
+            $table->enum('kyc_status', ['pending', 'verified', 'failed', 'expired', 'canceled', 'review'])->default('pending');
+            $table->timestamp('kyc_verified_at')->nullable();
+            $table->string('verified_phone')->nullable();
+            $table->timestamp('phone_verified_at')->nullable();
         });
     }
 
