@@ -21,6 +21,13 @@ class KycController extends Controller
     {
         $user = $request->user();
 
+        if ($user->is_verified) {
+            return response()->json([
+                'message' => 'KYC already verified',
+                'kyc' => $user->kycVerification,
+            ]);
+        }
+
         $validated = $request->validate([
             'inquiryId' => 'required|string',
             'status' => 'required|string',
