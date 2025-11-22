@@ -323,15 +323,48 @@ class PersonaKycHandler
 
     private function extractPhoneNumber(array $payload): ?string
     {
-        // Try multiple paths for phone number (webhook vs direct inquiry)
-        $fields = $payload['data']['attributes']['fields'] ?? 
-                  $payload['data']['attributes']['payload']['data']['attributes']['fields'] ?? 
-                  [];
+        // Persona API returns phone in different structures:
+        // 1. Direct API response: payload['data']['attributes']['fields']['phone_number']['value']
+        // 2. Webhook event: payload['data']['attributes']['payload']['data']['attributes']['fields']['phone_number']['value']
+        // 3. Webhook inquiry: payload['data']['attributes']['fields']['phone_number']['value']
         
-        $phoneValue = $fields['phone_number']['value'] ?? null;
-        if (!is_string($phoneValue)) {
+        $phoneValue = null;
+        $paths = [
+            // Direct API response structure
+            $payload['data']['attributes']['fields']['phone_number']['value'] ?? null,
+            // Webhook event structure (nested)
+            $payload['data']['attributes']['payload']['data']['attributes']['fields']['phone_number']['value'] ?? null,
+            // Alternative webhook structure
+            $payload['data']['attributes']['fields']['phone_number']['value'] ?? null,
+            // Try without 'value' wrapper (some Persona versions)
+            $payload['data']['attributes']['fields']['phone_number'] ?? null,
+            $payload['data']['attributes']['payload']['data']['attributes']['fields']['phone_number'] ?? null,
+        ];
+        
+        foreach ($paths as $path) {
+            if (is_string($path) && !empty(trim($path))) {
+                $phoneValue = $path;
+                break;
+            }
+            // Handle if phone_number is an array with 'value' key
+            if (is_array($path) && isset($path['value']) && is_string($path['value'])) {
+                $phoneValue = $path['value'];
+                break;
+            }
+        }
+        
+        if (!$phoneValue || !is_string($phoneValue)) {
+            // Log the actual payload structure for debugging
             Log::debug('PersonaKycHandler: Phone number not found in payload', [
-                'fields_keys' => array_keys($fields),
+                'payload_structure' => [
+                    'has_data' => isset($payload['data']),
+                    'has_attributes' => isset($payload['data']['attributes']),
+                    'has_fields' => isset($payload['data']['attributes']['fields']),
+                    'has_nested_fields' => isset($payload['data']['attributes']['payload']['data']['attributes']['fields']),
+                    'fields_keys' => isset($payload['data']['attributes']['fields']) 
+                        ? array_keys($payload['data']['attributes']['fields']) 
+                        : [],
+                ],
             ]);
             return null;
         }
@@ -360,6 +393,9 @@ class PersonaKycHandler
             // If it starts with 0, assume Saudi Arabia (966)
             if (str_starts_with($cleaned, '0')) {
                 $cleaned = '+966' . substr($cleaned, 1);
+            } elseif (str_starts_with($cleaned, '966')) {
+                // Already has country code, just add +
+                $cleaned = '+' . $cleaned;
             } else {
                 // Try to detect if it's already a country code
                 if (strlen($cleaned) >= 10) {

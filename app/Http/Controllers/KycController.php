@@ -65,6 +65,8 @@ class KycController extends Controller
                 'user_id' => $user->id,
                 'inquiry_id' => $validated['inquiryId'],
                 'has_payload' => !empty($payload),
+                'has_fields' => isset($payload['data']['attributes']['fields']),
+                'has_phone' => isset($payload['data']['attributes']['fields']['phone_number']),
             ]);
         } catch (\Throwable $e) {
             Log::warning('KYC complete: Unable to fetch inquiry details', [
