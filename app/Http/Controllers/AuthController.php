@@ -38,6 +38,7 @@ class AuthController extends Controller
 
             $user = User::create([
                 'name' => $validated['name'],
+                'username' => $validated['name'], // Set username from name (migration will handle existing users)
                 'email' => strtolower($validated['email']), // Store email in lowercase
                 'password' => Hash::make($validated['password']),
                 'phone' => $validated['phone'] ?? null,
