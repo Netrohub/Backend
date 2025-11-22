@@ -9,26 +9,34 @@ use RuntimeException;
 class PersonaService
 {
     public function __construct(
-        protected string $apiKey = '',
+        protected ?string $apiKey = null,
         protected string $baseUrl = 'https://api.withpersona.com/api/v1',
     ) {
-        $this->apiKey = $this->apiKey ?: config('services.persona.api_key');
+        // Get API key from config if not provided
+        // During Docker build, config might not be available, so handle null gracefully
+        $configKey = config('services.persona.api_key');
+        // Ensure we never assign null - use empty string as fallback
+        $this->apiKey = ($this->apiKey ?? $configKey) ?? '';
         $this->baseUrl = config('services.persona.base_url') ?: $this->baseUrl;
 
-        if (empty($this->apiKey)) {
-            throw new RuntimeException('Persona API key is not configured.');
+        // Only log if API key is present (avoid errors during build when config might not be available)
+        // During Docker build, config might not be loaded, so we allow empty API key
+        if (!empty($this->apiKey) && app()->bound('log')) {
+            try {
+                Log::info('PersonaService initialized', [
+                    'api_key_present' => true,
+                    'masked_api_key' => $this->maskApiKey($this->apiKey),
+                ]);
+            } catch (\Throwable $e) {
+                // Silently fail during build if Log is not available
+            }
         }
-
-        Log::info('PersonaService initialized', [
-            'api_key_present' => (bool) $this->apiKey,
-            'masked_api_key' => $this->maskApiKey($this->apiKey),
-        ]);
     }
 
     private function maskApiKey(string $key): string
     {
-        if (strlen($key) <= 6) {
-            return str_repeat('*', strlen($key));
+        if (empty($key) || strlen($key) <= 6) {
+            return str_repeat('*', max(6, strlen($key)));
         }
 
         return substr($key, 0, 3) . str_repeat('*', strlen($key) - 6) . substr($key, -3);
@@ -36,6 +44,10 @@ class PersonaService
 
     public function createInquiry(string $templateId, string $referenceId): array
     {
+        if (empty($this->apiKey)) {
+            throw new RuntimeException('Persona API key is not configured.');
+        }
+
         $response = Http::withBasicAuth($this->apiKey, '')
             ->post("{$this->baseUrl}/inquiries", [
                 'data' => [
@@ -54,6 +66,10 @@ class PersonaService
 
     public function resumeInquiry(string $inquiryId): array
     {
+        if (empty($this->apiKey)) {
+            throw new RuntimeException('Persona API key is not configured.');
+        }
+
         $response = Http::withBasicAuth($this->apiKey, '')
             ->post("{$this->baseUrl}/inquiries/{$inquiryId}/resume");
 
@@ -64,6 +80,10 @@ class PersonaService
 
     public function getInquiry(string $inquiryId): array
     {
+        if (empty($this->apiKey)) {
+            throw new RuntimeException('Persona API key is not configured.');
+        }
+
         $response = Http::withBasicAuth($this->apiKey, '')
             ->get("{$this->baseUrl}/inquiries/{$inquiryId}");
 
