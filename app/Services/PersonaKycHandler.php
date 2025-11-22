@@ -55,35 +55,62 @@ class PersonaKycHandler
         }
         $kyc->save();
 
-        if ($kyc->status === 'verified') {
-            $user = $kyc->user;
-            if (!$user) {
-                Log::warning('PersonaKycHandler: KYC record missing associated user', ['kyc_id' => $kyc->id]);
-                return $kyc;
+        $user = $kyc->user;
+        if ($user) {
+            $userChanged = false;
+            if ($referenceId && $user->persona_reference_id !== $referenceId) {
+                $user->persona_reference_id = $referenceId;
+                $userChanged = true;
             }
 
-            $userChanged = false;
-            if (!$user->is_verified) {
+            if ($user->persona_inquiry_id !== $inquiryId) {
+                $user->persona_inquiry_id = $inquiryId;
+                $userChanged = true;
+            }
+
+            if ($user->kyc_status !== $kyc->status) {
+                $user->kyc_status = $kyc->status;
+                $userChanged = true;
+            }
+
+            if ($kyc->status === 'verified' && !$user->kyc_verified_at) {
+                $user->kyc_verified_at = now();
+                $userChanged = true;
+            }
+
+            if ($kyc->status === 'verified' && !$user->is_verified) {
                 $user->is_verified = true;
                 $userChanged = true;
             }
 
             $phone = $this->extractPhoneNumber($payload);
-            if ($phone && $user->phone !== $phone) {
-                $user->phone = $phone;
+            if ($phone) {
+                if ($user->verified_phone !== $phone) {
+                    $user->verified_phone = $phone;
+                    $userChanged = true;
+                }
+
+                if ($user->phone !== $phone) {
+                    $user->phone = $phone;
+                    $userChanged = true;
+                }
+
+                $user->phone_verified_at = now();
                 $userChanged = true;
             }
 
             if ($userChanged) {
                 $user->save();
             }
+        } elseif (!$user && $referenceId) {
+            Log::warning('PersonaKycHandler: KYC record missing associated user', ['kyc_id' => $kyc->id, 'reference_id' => $referenceId]);
+        }
 
-            $user->notify(new \App\Notifications\KycVerified($kyc, true));
+        $userForNotification = $user;
+        if ($kyc->status === 'verified') {
+            $userForNotification?->notify(new \App\Notifications\KycVerified($kyc, true));
         } elseif (in_array($kyc->status, ['failed', 'expired'], true)) {
-            $user = $kyc->user;
-            if ($user) {
-                $user->notify(new \App\Notifications\KycVerified($kyc, false));
-            }
+            $userForNotification?->notify(new \App\Notifications\KycVerified($kyc, false));
         }
 
         return $kyc;

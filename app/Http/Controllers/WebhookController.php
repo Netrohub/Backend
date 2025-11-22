@@ -17,7 +17,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\MessageHelper;
-use App\Helpers\AuditHelper;
 
 class WebhookController extends Controller
 {

@@ -27,6 +27,12 @@ class User extends Authenticatable implements MustVerifyEmail
         'email',
         'password',
         'phone',
+        'persona_inquiry_id',
+        'persona_reference_id',
+        'kyc_status',
+        'kyc_verified_at',
+        'verified_phone',
+        'phone_verified_at',
         'role',
         'is_verified',
         'avatar',
@@ -43,6 +49,11 @@ class User extends Authenticatable implements MustVerifyEmail
         'remember_token',
     ];
 
+    protected $appends = [
+        'has_completed_kyc',
+        'phone_verified',
+    ];
+
     /**
      * Get the attributes that should be cast.
      *
@@ -54,6 +65,8 @@ class User extends Authenticatable implements MustVerifyEmail
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_verified' => 'boolean',
+            'kyc_verified_at' => 'datetime',
+            'phone_verified_at' => 'datetime',
         ];
     }
 
@@ -142,6 +155,16 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         return $this->kycVerification?->status === 'verified';
+    }
+
+    public function getHasCompletedKycAttribute(): bool
+    {
+        return $this->kyc_status === 'verified';
+    }
+
+    public function getPhoneVerifiedAttribute(): bool
+    {
+        return !is_null($this->phone_verified_at);
     }
 
     // Helper methods
