@@ -31,9 +31,11 @@ class PaymentConfirmed extends Notification implements ShouldQueue
      */
     public function toMail(object $notifiable): MailMessage
     {
+        $userName = $notifiable->username ?? $notifiable->name;
+        
         return (new MailMessage)
             ->subject("Payment Confirmed - Order #{$this->order->id}")
-            ->greeting("Hello {$notifiable->name},")
+            ->greeting("Hello {$userName},")
             ->line("Your payment of SAR " . number_format($this->order->amount, 2) . " for Order #{$this->order->id} has been confirmed.")
             ->line("The funds are now held in escrow and will be released to the seller after 12 hours if no dispute is filed.")
             ->line("Order Details:")

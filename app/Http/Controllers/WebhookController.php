@@ -392,9 +392,11 @@ class WebhookController extends Controller
 
                         // Mark listing as sold only after payment is confirmed (order is now real)
                         $listing = $order->listing;
+                        $listingSold = false;
                         if ($listing && $listing->status === 'active') {
                             $listing->status = 'sold';
                             $listing->save();
+                            $listingSold = true;
                         }
 
                         // Audit log for order status change
@@ -416,6 +418,9 @@ class WebhookController extends Controller
                         $order->buyer->notify(new PaymentConfirmed($order));
                         $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
                         $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                        if ($listingSold && $listing) {
+                            $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                        }
 
                         // Schedule escrow release job
                         ReleaseEscrowFunds::dispatch($order->id)

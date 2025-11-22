@@ -56,11 +56,12 @@ class DisputeCreated extends Notification implements ShouldQueue
     {
         $order = $this->dispute->order;
         $isInitiator = $notifiable->id === $this->dispute->initiated_by;
+        $userName = $notifiable->username ?? $notifiable->name;
         
         if ($isInitiator) {
             return (new MailMessage)
                 ->subject("Dispute Filed - Order #{$order->id}")
-                ->greeting("Hello {$notifiable->name},")
+                ->greeting("Hello {$userName},")
                 ->line("Your dispute for Order #{$order->id} has been filed successfully.")
                 ->line("Dispute Details:")
                 ->line("- Order ID: #{$order->id}")
@@ -73,7 +74,7 @@ class DisputeCreated extends Notification implements ShouldQueue
         } else {
             return (new MailMessage)
                 ->subject("Dispute Filed Against Order #{$order->id}")
-                ->greeting("Hello {$notifiable->name},")
+                ->greeting("Hello {$userName},")
                 ->line("A dispute has been filed for Order #{$order->id}.")
                 ->line("Dispute Details:")
                 ->line("- Order ID: #{$order->id}")

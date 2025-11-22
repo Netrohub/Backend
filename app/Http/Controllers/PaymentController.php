@@ -385,9 +385,11 @@ class PaymentController extends Controller
                                     
                                     // Mark listing as sold
                                     $listing = $order->listing;
+                                    $listingSold = false;
                                     if ($listing && $listing->status === 'active') {
                                         $listing->status = 'sold';
                                         $listing->save();
+                                        $listingSold = true;
                                     }
                                     
                                     // Audit log
@@ -407,6 +409,9 @@ class PaymentController extends Controller
                                     
                                     // Send notifications
                                     $order->buyer->notify(new PaymentConfirmed($order));
+                                    if ($listingSold && $listing) {
+                                        $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                                    }
                                     $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
                                     $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
                                     

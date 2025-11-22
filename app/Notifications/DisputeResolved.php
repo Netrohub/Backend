@@ -64,6 +64,7 @@ class DisputeResolved extends Notification implements ShouldQueue
     {
         $order = $this->dispute->order;
         $isBuyer = $notifiable->id === $order->buyer_id;
+        $userName = $notifiable->username ?? $notifiable->name;
         
         $resolutionMessage = match($this->resolution) {
             'refund_buyer' => $isBuyer 
@@ -77,7 +78,7 @@ class DisputeResolved extends Notification implements ShouldQueue
 
         return (new MailMessage)
             ->subject("Dispute Resolved - Order #{$order->id}")
-            ->greeting("Hello {$notifiable->name},")
+            ->greeting("Hello {$userName},")
             ->line("The dispute for Order #{$order->id} has been resolved.")
             ->line("Resolution:")
             ->line("- Status: " . ucfirst(str_replace('_', ' ', $this->dispute->status)))

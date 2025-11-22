@@ -45,10 +45,11 @@ class OrderStatusChanged extends Notification implements ShouldQueue
         $message = $statusMessages[$this->newStatus] ?? 'status has changed';
         $isBuyer = $notifiable->id === $this->order->buyer_id;
         $role = $isBuyer ? 'buyer' : 'seller';
+        $userName = $notifiable->username ?? $notifiable->name;
 
         return (new MailMessage)
             ->subject("Order #{$this->order->id} {$message}")
-            ->greeting("Hello {$notifiable->name},")
+            ->greeting("Hello {$userName},")
             ->line("Your order #{$this->order->id} as {$role} {$message}.")
             ->line("Order Details:")
             ->line("- Order ID: #{$this->order->id}")

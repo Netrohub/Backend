@@ -24,6 +24,7 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     protected $fillable = [
         'name',
+        'username',
         'email',
         'password',
         'phone',
@@ -165,6 +166,15 @@ class User extends Authenticatable implements MustVerifyEmail
     public function getPhoneVerifiedAttribute(): bool
     {
         return !is_null($this->phone_verified_at);
+    }
+
+    /**
+     * Get the official name (username if available, otherwise name)
+     * This is the primary method to get the user's display name
+     */
+    public function getOfficialNameAttribute(): string
+    {
+        return $this->username ?? $this->name ?? '';
     }
 
     // Helper methods
