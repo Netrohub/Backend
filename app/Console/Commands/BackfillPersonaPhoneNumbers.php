@@ -63,12 +63,39 @@ class BackfillPersonaPhoneNumbers extends Command
             }
 
             try {
-                // Fetch inquiry from Persona API
-                $this->line("  📞 Fetching inquiry {$user->persona_inquiry_id} from Persona...");
-                $inquiry = $this->personaService->getInquiry($user->persona_inquiry_id);
-
-                // Extract phone number
-                $phone = $this->extractPhoneNumber($inquiry);
+                $phone = null;
+                
+                // First, try to extract from existing KYC record's persona_data (from webhooks)
+                $kyc = $user->kycVerification;
+                if ($kyc && !empty($kyc->persona_data)) {
+                    $this->line("  📞 Trying to extract from stored KYC data...");
+                    $phone = $this->extractPhoneNumber($kyc->persona_data);
+                    if ($phone) {
+                        $this->line("  ✅ Found phone in stored webhook data!");
+                    } else {
+                        $this->line("  ℹ️  No phone found in stored data");
+                    }
+                } else {
+                    $this->line("  ℹ️  No stored KYC data available");
+                }
+                
+                // If not found in stored data, try fetching from Persona API (optional)
+                if (!$phone) {
+                    $this->line("  📞 Attempting to fetch from Persona API...");
+                    try {
+                        $inquiry = $this->personaService->getInquiry($user->persona_inquiry_id);
+                        $phone = $this->extractPhoneNumber($inquiry);
+                        if ($phone) {
+                            $this->line("  ✅ Found phone via API!");
+                        }
+                    } catch (\Throwable $apiError) {
+                        $this->warn("  ⚠️  Persona API unavailable: {$apiError->getMessage()}");
+                        $this->warn("  ⚠️  Phone number not available (API authentication issue)");
+                        // Don't skip - continue to next user
+                        $skippedCount++;
+                        continue;
+                    }
+                }
 
                 if (!$phone) {
                     $this->warn("  ⚠️  No phone number found in inquiry");
@@ -129,24 +156,42 @@ class BackfillPersonaPhoneNumbers extends Command
 
     private function extractPhoneNumber(array $payload): ?string
     {
-        // Try multiple paths for phone number
+        // Persona API returns phone in different structures:
+        // 1. Direct API response: payload['data']['attributes']['fields']['phone_number']['value']
+        // 2. Webhook event: payload['data']['attributes']['payload']['data']['attributes']['fields']['phone_number']['value']
+        // 3. Webhook inquiry: payload['data']['attributes']['fields']['phone_number']['value']
+        // 4. Stored data might have different structure
+        
+        $phoneValue = null;
         $paths = [
+            // Direct API response structure
             $payload['data']['attributes']['fields']['phone_number']['value'] ?? null,
+            // Webhook event structure (nested)
             $payload['data']['attributes']['payload']['data']['attributes']['fields']['phone_number']['value'] ?? null,
+            // Alternative webhook structure
             $payload['data']['attributes']['fields']['phone_number'] ?? null,
+            // Try without 'value' wrapper (some Persona versions)
             $payload['data']['attributes']['payload']['data']['attributes']['fields']['phone_number'] ?? null,
         ];
         
         foreach ($paths as $path) {
             if (is_string($path) && !empty(trim($path))) {
-                return trim($path);
+                $phoneValue = $path;
+                break;
             }
+            // Handle if phone_number is an array with 'value' key
             if (is_array($path) && isset($path['value']) && is_string($path['value'])) {
-                return trim($path['value']);
+                $phoneValue = $path['value'];
+                break;
             }
         }
         
-        return null;
+        if (!$phoneValue || !is_string($phoneValue)) {
+            return null;
+        }
+
+        $clean = trim($phoneValue);
+        return $clean === '' ? null : $clean;
     }
 
     private function sanitizePhoneNumber(string $phone): ?string
@@ -161,9 +206,14 @@ class BackfillPersonaPhoneNumbers extends Command
 
         // Ensure it starts with + or add country code default
         if (!str_starts_with($cleaned, '+')) {
+            // If it starts with 0, assume Saudi Arabia (966)
             if (str_starts_with($cleaned, '0')) {
                 $cleaned = '+966' . substr($cleaned, 1);
+            } elseif (str_starts_with($cleaned, '966')) {
+                // Already has country code, just add +
+                $cleaned = '+' . $cleaned;
             } else {
+                // Try to detect if it's already a country code
                 if (strlen($cleaned) >= 10) {
                     $cleaned = '+' . $cleaned;
                 } else {
