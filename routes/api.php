@@ -80,8 +80,10 @@ Route::prefix('v1')->group(function () {
     Route::get('/tiktok/callback', [\App\Http\Controllers\TikTokController::class, 'callback']);
 
     // Discord OAuth2 routes (no auth required for redirect/callback)
-    Route::get('/auth/discord/redirect', [\App\Http\Controllers\DiscordAuthController::class, 'redirect']);
-    Route::get('/auth/discord/callback', [\App\Http\Controllers\DiscordAuthController::class, 'callback']);
+    Route::get('/auth/discord/redirect', [\App\Http\Controllers\DiscordAuthController::class, 'redirect'])
+        ->name('discord.redirect');
+    Route::get('/auth/discord/callback', [\App\Http\Controllers\DiscordAuthController::class, 'callback'])
+        ->name('discord.callback');
 
     // Protected routes
         Route::middleware('auth:sanctum')->group(function () {
