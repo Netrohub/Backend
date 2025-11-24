@@ -81,8 +81,9 @@ return [
         'client_id' => env('DISCORD_CLIENT_ID'),
         'client_secret' => env('DISCORD_CLIENT_SECRET'),
         'redirect_uri' => env('DISCORD_REDIRECT_URI', env('APP_URL') . '/api/v1/auth/discord/callback'),
-        'scopes' => env('DISCORD_OAUTH_SCOPES', 'identify email'),
+        'scopes' => env('DISCORD_OAUTH_SCOPES', 'identify email guilds.join'),
         'bot_webhook_url' => env('DISCORD_BOT_WEBHOOK_URL'),
+        'guild_id' => env('DISCORD_GUILD_ID'), // Server/Guild ID for auto-joining
     ],
 
     'paylink' => [

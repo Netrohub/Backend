@@ -175,6 +175,9 @@ class DiscordAuthController extends Controller
                 return redirect(config('app.frontend_url') . '/auth?error=invalid_discord_user');
             }
             
+            // Automatically add user to Discord server (non-blocking - don't fail if this fails)
+            $this->addUserToGuild($discordUserId, $accessToken);
+            
             // Handle login vs connect mode
             if ($mode === 'connect') {
                 $userIdFromState = $stateData['user_id'] ?? null;
@@ -331,7 +334,7 @@ class DiscordAuthController extends Controller
                 'existing_user_id' => $existingUser->id,
                 'attempted_user_id' => $user->id,
             ]);
-            return redirect(config('app.frontend_url') . '/settings?error=discord_already_linked');
+            return redirect(config('app.frontend_url') . '/profile?error=discord_already_linked');
         }
         
         // Link Discord to current user (with error handling for race conditions)
@@ -350,12 +353,12 @@ class DiscordAuthController extends Controller
                     'user_id' => $user->id,
                     'error' => $e->getMessage(),
                 ]);
-                return redirect(config('app.frontend_url') . '/settings?error=discord_already_linked');
+                return redirect(config('app.frontend_url') . '/profile?error=discord_already_linked');
             }
             throw $e;
         }
         
-        return redirect(config('app.frontend_url') . '/settings?discord_connected=true');
+        return redirect(config('app.frontend_url') . '/profile?discord_connected=true');
     }
 
     /**
@@ -396,6 +399,85 @@ class DiscordAuthController extends Controller
         
         // Get the user from the token
         return $accessToken->tokenable;
+    }
+
+    /**
+     * Add user to Discord server/guild using OAuth access token
+     * 
+     * @param string $discordUserId The Discord user ID
+     * @param string $accessToken The OAuth access token
+     * @return bool True if successful, false otherwise
+     */
+    private function addUserToGuild(string $discordUserId, string $accessToken): bool
+    {
+        $guildId = config('services.discord.guild_id');
+        
+        if (!$guildId) {
+            Log::debug('Discord guild ID not configured, skipping auto-join');
+            return false;
+        }
+        
+        try {
+            // Discord API: PUT /guilds/{guild.id}/members/{user.id}
+            // Requires OAuth access token with guilds.join scope
+            $response = Http::withToken($accessToken)
+                ->put("https://discord.com/api/guilds/{$guildId}/members/{$discordUserId}", [
+                    'access_token' => $accessToken,
+                ]);
+            
+            if ($response->successful()) {
+                Log::info('User added to Discord server', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                ]);
+                return true;
+            }
+            
+            // Handle specific error cases
+            $status = $response->status();
+            $body = $response->json();
+            
+            // 201 = Created (user was added)
+            // 204 = No Content (user was already in server)
+            if ($status === 201 || $status === 204) {
+                Log::info('User added to Discord server (or already member)', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                    'status' => $status,
+                ]);
+                return true;
+            }
+            
+            // 400 = Bad Request (user might already be in server, or invalid request)
+            // 403 = Forbidden (bot doesn't have permission, or user blocked bot)
+            // 404 = Not Found (guild or user not found)
+            if ($status === 400) {
+                // User might already be in server - this is fine
+                Log::debug('User might already be in Discord server', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                    'response' => $body,
+                ]);
+                return true; // Treat as success
+            }
+            
+            Log::warning('Failed to add user to Discord server', [
+                'discord_user_id' => $discordUserId,
+                'guild_id' => $guildId,
+                'status' => $status,
+                'response' => $body,
+            ]);
+            
+            return false;
+        } catch (\Exception $e) {
+            // Don't fail the OAuth flow if adding to server fails
+            Log::error('Exception adding user to Discord server', [
+                'discord_user_id' => $discordUserId,
+                'guild_id' => $guildId,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
     }
 
     /**
