@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Models\Listing;
 use App\Models\User;
+use App\Constants\ListingCategories;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -30,7 +31,7 @@ class ListingFactory extends Factory
             'title' => fake()->sentence(4),
             'description' => fake()->paragraph(),
             'price' => fake()->randomFloat(2, 10, 1000),
-            'category' => fake()->randomElement(['wos_accounts', 'tiktok_accounts', 'instagram_accounts']),
+            'category' => fake()->randomElement(ListingCategories::all()),
             'images' => [],
             'status' => 'active',
             'views' => fake()->numberBetween(0, 1000),

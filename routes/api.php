@@ -56,6 +56,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/public/maintenance-status', [SettingsController::class, 'maintenanceStatus']);
     
     // Listings (public - anyone can browse, but creating/updating requires auth)
+    Route::get('/listings/categories', [ListingController::class, 'categories'])->middleware('throttle:60,1');
     Route::get('/listings', [ListingController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/listings/{id}', [ListingController::class, 'show'])->middleware('throttle:30,1');
     

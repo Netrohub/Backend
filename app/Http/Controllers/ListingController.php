@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Listing;
 use App\Models\Order;
 use App\Services\ListingEventEmitter;
+use App\Constants\ListingCategories;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
@@ -30,6 +31,24 @@ class ListingController extends Controller
     const MAX_LISTING_PRICE = 10000; // $10,000 maximum
     const MAX_IMAGES = 10; // Maximum 10 images per listing
     const MAX_ACTIVE_LISTINGS_PER_USER = 20; // Max active listings per user
+    /**
+     * Get all available listing categories
+     */
+    public function categories()
+    {
+        return response()->json([
+            'categories' => ListingCategories::all(),
+            'gaming' => ListingCategories::gaming(),
+            'social' => ListingCategories::social(),
+            'categories_with_names' => array_map(function ($category) {
+                return [
+                    'value' => $category,
+                    'label' => ListingCategories::getDisplayName($category),
+                ];
+            }, ListingCategories::all()),
+        ]);
+    }
+
     public function index(Request $request)
     {
         // Show both active and sold listings from active (non-deleted) users
@@ -39,7 +58,15 @@ class ListingController extends Controller
             ->fromActiveUsers();
 
         if ($request->has('category')) {
-            $query->where('category', $request->category);
+            // Validate category if provided
+            $category = $request->category;
+            if (!ListingCategories::isValid($category)) {
+                return response()->json([
+                    'message' => 'Invalid category. Valid categories: ' . implode(', ', ListingCategories::all()),
+                    'error_code' => 'INVALID_CATEGORY',
+                ], 400);
+            }
+            $query->where('category', $category);
         }
 
         if ($request->has('search') && !empty($request->search)) {
@@ -141,7 +168,16 @@ class ListingController extends Controller
                 'min:' . self::MIN_LISTING_PRICE,
                 'max:' . self::MAX_LISTING_PRICE,
             ],
-            'category' => 'required|string|max:100',
+            'category' => [
+                'required',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) {
+                    if (!ListingCategories::isValid($value)) {
+                        $fail('The selected category is invalid. Valid categories: ' . implode(', ', ListingCategories::all()));
+                    }
+                },
+            ],
             'images' => 'nullable|array|max:' . self::MAX_IMAGES,
             'images.*' => 'url|max:2048', // Each image must be a valid URL
             
@@ -308,7 +344,16 @@ class ListingController extends Controller
                 'min:' . self::MIN_LISTING_PRICE,
                 'max:' . self::MAX_LISTING_PRICE,
             ],
-            'category' => 'sometimes|string|max:100',
+            'category' => [
+                'sometimes',
+                'string',
+                'max:100',
+                function ($attribute, $value, $fail) {
+                    if (!ListingCategories::isValid($value)) {
+                        $fail('The selected category is invalid. Valid categories: ' . implode(', ', ListingCategories::all()));
+                    }
+                },
+            ],
             'images' => 'sometimes|array|max:' . self::MAX_IMAGES,
             'images.*' => 'url|max:2048', // Each image must be a valid URL
             'status' => 'sometimes|in:active,inactive', // Sellers cannot manually set to 'sold' - only via payment confirmation
