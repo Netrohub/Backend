@@ -25,16 +25,26 @@ class DiscordAuthController extends Controller
     {
         $request->validate([
             'mode' => 'sometimes|in:login,connect',
+            'token' => 'sometimes|string', // Token for connect mode (passed as query param)
         ]);
         
         $mode = $request->input('mode', $mode);
         
         // For 'connect' mode, user must be authenticated
-        if ($mode === 'connect' && !$request->user()) {
-            return response()->json([
-                'error' => 'authentication_required',
-                'message' => 'You must be logged in to connect your Discord account.',
-            ], 401);
+        if ($mode === 'connect') {
+            $user = $this->authenticateUser($request);
+            
+            if (!$user) {
+                return response()->json([
+                    'error' => 'authentication_required',
+                    'message' => 'You must be logged in to connect your Discord account.',
+                ], 401);
+            }
+            
+            // Store user ID in state for verification in callback
+            $userId = $user->id;
+        } else {
+            $userId = null;
         }
         
         $clientId = config('services.discord.client_id');
@@ -61,6 +71,7 @@ class DiscordAuthController extends Controller
             'state' => $state,
             'mode' => $mode,
             'redirect_to' => $redirectTo,
+            'user_id' => $userId ?? null, // Store user ID for connect mode verification
         ], now()->addMinutes(10));
         
         $params = http_build_query([
@@ -166,7 +177,8 @@ class DiscordAuthController extends Controller
             
             // Handle login vs connect mode
             if ($mode === 'connect') {
-                return $this->handleConnect($request, $discordUserId, $discordUsername, $discordAvatar);
+                $userIdFromState = $stateData['user_id'] ?? null;
+                return $this->handleConnect($request, $discordUserId, $discordUsername, $discordAvatar, $userIdFromState);
             } else {
                 return $this->handleLogin($request, $discordUserId, $discordUsername, $discordAvatar, $discordEmail);
             }
@@ -293,9 +305,16 @@ class DiscordAuthController extends Controller
     /**
      * Handle connect mode - link Discord to existing authenticated user
      */
-    private function handleConnect(Request $request, string $discordUserId, string $discordUsername, ?string $discordAvatar)
+    private function handleConnect(Request $request, string $discordUserId, string $discordUsername, ?string $discordAvatar, ?int $userIdFromState = null)
     {
-        $user = $request->user();
+        // Get user from state (stored during redirect) or from request
+        $user = null;
+        
+        if ($userIdFromState) {
+            $user = User::find($userIdFromState);
+        } else {
+            $user = $request->user();
+        }
         
         if (!$user) {
             return redirect(config('app.frontend_url') . '/auth?error=not_authenticated');
@@ -337,6 +356,46 @@ class DiscordAuthController extends Controller
         }
         
         return redirect(config('app.frontend_url') . '/settings?discord_connected=true');
+    }
+
+    /**
+     * Manually authenticate user from Bearer token (for public routes)
+     * Supports both Authorization header and token query parameter
+     */
+    private function authenticateUser(Request $request): ?User
+    {
+        // Try to get user from request (if middleware already authenticated)
+        if ($request->user()) {
+            return $request->user();
+        }
+        
+        $token = null;
+        
+        // Check for token in query parameter (for browser redirects)
+        if ($request->has('token')) {
+            $token = $request->input('token');
+        }
+        // Check for Bearer token in Authorization header
+        else {
+            $authHeader = $request->header('Authorization');
+            if ($authHeader && str_starts_with($authHeader, 'Bearer ')) {
+                $token = substr($authHeader, 7); // Remove 'Bearer ' prefix
+            }
+        }
+        
+        if (!$token) {
+            return null;
+        }
+        
+        // Find the token in database
+        $accessToken = PersonalAccessToken::findToken($token);
+        
+        if (!$accessToken) {
+            return null;
+        }
+        
+        // Get the user from the token
+        return $accessToken->tokenable;
     }
 
     /**
