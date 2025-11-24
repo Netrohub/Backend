@@ -53,8 +53,14 @@ class DiscordAuthController extends Controller
         }
         
         $state = bin2hex(random_bytes(16));
-        $request->session()->put('discord_oauth_state', $state);
-        $request->session()->put('discord_oauth_mode', $mode);
+        $redirectTo = $request->query('redirect_to', '/');
+        
+        // Store state in cache for 10 minutes (same as TikTok OAuth)
+        Cache::put("discord_oauth_state:{$state}", [
+            'state' => $state,
+            'mode' => $mode,
+            'redirect_to' => $redirectTo,
+        ], now()->addMinutes(10));
         
         $params = http_build_query([
             'client_id' => $clientId,
@@ -87,14 +93,13 @@ class DiscordAuthController extends Controller
             return redirect(config('app.frontend_url') . '/auth?error=discord_oauth_failed');
         }
         
-        // Verify state
-        $sessionState = $request->session()->get('discord_oauth_state');
-        $mode = $request->session()->get('discord_oauth_mode', 'login');
+        // Verify state from cache
+        $stateData = Cache::get("discord_oauth_state:{$state}");
         
-        if (!$state || $state !== $sessionState) {
-            Log::warning('Discord OAuth state mismatch', [
+        if (!$stateData || !isset($stateData['state']) || $stateData['state'] !== $state) {
+            Log::warning('Discord OAuth state mismatch or expired', [
                 'provided' => $state,
-                'expected' => $sessionState,
+                'cached' => $stateData ? 'exists' : 'missing',
             ]);
             return redirect(config('app.frontend_url') . '/auth?error=invalid_state');
         }
@@ -103,9 +108,11 @@ class DiscordAuthController extends Controller
             return redirect(config('app.frontend_url') . '/auth?error=no_code');
         }
         
-        // Clear state from session
-        $request->session()->forget('discord_oauth_state');
-        $request->session()->forget('discord_oauth_mode');
+        $mode = $stateData['mode'] ?? 'login';
+        $redirectTo = $stateData['redirect_to'] ?? '/';
+        
+        // Clear state from cache
+        Cache::forget("discord_oauth_state:{$state}");
         
         try {
             // Exchange code for access token
