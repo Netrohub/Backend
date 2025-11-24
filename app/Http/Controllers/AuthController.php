@@ -262,7 +262,9 @@ class AuthController extends Controller
         
         return response()->json([
             'id' => $user->id,
-            'name' => $user->name,
+            'username' => $user->username,
+            'display_name' => $user->display_name,
+            'name' => $user->name, // Keep for backward compatibility
             'email' => $user->email,
             'phone' => $user->phone,
             'verified_phone' => $user->verified_phone,
@@ -275,6 +277,11 @@ class AuthController extends Controller
             'phone_verified_at' => $user->phone_verified_at?->toIso8601String(),
             'avatar' => $user->avatar,
             'bio' => $user->bio,
+            'discord_user_id' => $user->discord_user_id,
+            'discord_username' => $user->discord_username,
+            'discord_avatar' => $user->discord_avatar,
+            'has_discord' => $user->hasDiscord(),
+            'is_seller' => $user->is_seller,
             'email_verified_at' => $user->email_verified_at?->toIso8601String(),
             'created_at' => $user->created_at->toIso8601String(),
             'updated_at' => $user->updated_at->toIso8601String(),

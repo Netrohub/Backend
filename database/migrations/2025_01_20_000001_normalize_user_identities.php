@@ -108,6 +108,8 @@ return new class extends Migration
             'orders' => ['buyer_id', 'seller_id'],
             'disputes' => ['initiated_by', 'resolved_by'],
             'wallets' => 'user_id',
+            'user_notifications' => 'user_id',
+            'audit_logs' => 'user_id',
         ];
         
         foreach ($tables as $table => $columns) {
@@ -118,7 +120,7 @@ return new class extends Migration
             $columns = is_array($columns) ? $columns : [$columns];
             
             foreach ($columns as $column) {
-                // Find orphaned references
+                // Find orphaned references (users that don't exist)
                 $orphaned = DB::table($table)
                     ->whereNotIn($column, function ($query) {
                         $query->select('id')->from('users');
@@ -130,6 +132,29 @@ return new class extends Migration
                     // Don't auto-delete - requires manual review
                 }
             }
+        }
+        
+        // Check for duplicate usernames (shouldn't happen after normalization, but verify)
+        $duplicates = DB::table('users')
+            ->select('username', DB::raw('count(*) as count'))
+            ->groupBy('username')
+            ->having('count', '>', 1)
+            ->get();
+        
+        if ($duplicates->count() > 0) {
+            \Illuminate\Support\Facades\Log::warning("Found duplicate usernames after normalization", [
+                'duplicates' => $duplicates->pluck('username')->toArray(),
+            ]);
+        }
+        
+        // Check for users with null or empty usernames
+        $nullUsernames = DB::table('users')
+            ->whereNull('username')
+            ->orWhere('username', '')
+            ->count();
+        
+        if ($nullUsernames > 0) {
+            \Illuminate\Support\Facades\Log::warning("Found {$nullUsernames} users with null or empty usernames after normalization");
         }
     }
 

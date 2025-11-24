@@ -55,7 +55,7 @@ class WithdrawalRejected extends Notification implements ShouldQueue
     {
         return (new MailMessage)
             ->subject("Withdrawal Request Rejected - $" . number_format($this->withdrawalRequest->amount, 2))
-            ->greeting("Hello {$notifiable->name},")
+            ->greeting("Hello " . ($notifiable->username ?? $notifiable->name) . ",")
             ->line("Your withdrawal request for $" . number_format($this->withdrawalRequest->amount, 2) . " has been rejected.")
             ->line("Reason: {$this->reason}")
             ->line("The amount has been refunded to your available balance.")

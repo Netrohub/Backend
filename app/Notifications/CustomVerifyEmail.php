@@ -66,7 +66,7 @@ class CustomVerifyEmail extends VerifyEmail
 
         return (new MailMessage)
             ->subject('توثيق البريد الإلكتروني - ' . config('app.name'))
-            ->greeting('مرحباً ' . $notifiable->name . '!')
+            ->greeting('مرحباً ' . ($notifiable->username ?? $notifiable->name) . '!')
             ->line('شكراً لتسجيلك في ' . config('app.name'))
             ->line('يرجى الضغط على الزر أدناه لتوثيق بريدك الإلكتروني:')
             ->action('توثيق البريد الإلكتروني', $verificationUrl)

@@ -104,7 +104,7 @@ class PaymentController extends Controller
             'amount' => $amountSAR,
             'currency' => 'SAR',
             'callBackUrl' => config('app.url') . '/payments/paylink/callback?order_id=' . $order->id,
-            'clientName' => $request->user()->name,
+            'clientName' => $request->user()->username ?? $request->user()->name,
             'clientEmail' => $request->user()->email,
             'clientMobile' => $request->user()->phone ?? '',
             'note' => 'Order #' . $order->id . ' - ' . ($order->listing->title ?? 'Account Purchase'),

@@ -54,7 +54,7 @@ class WithdrawalApproved extends Notification implements ShouldQueue
     {
         return (new MailMessage)
             ->subject("Withdrawal Approved - $" . number_format($this->withdrawalRequest->amount, 2))
-            ->greeting("Hello {$notifiable->name},")
+            ->greeting("Hello " . ($notifiable->username ?? $notifiable->name) . ",")
             ->line("Your withdrawal request for $" . number_format($this->withdrawalRequest->amount, 2) . " has been approved.")
             ->line("The transfer has been initiated and should be completed within 1-4 business days.")
             ->line("Withdrawal Details:")

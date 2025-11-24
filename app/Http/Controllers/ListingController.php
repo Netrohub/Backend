@@ -604,7 +604,9 @@ class ListingController extends Controller
             $seller = $listing->user;
             $data['user'] = [
                 'id' => $seller->id,
-                'name' => $seller->name,
+                'username' => $seller->username,
+                'display_name' => $seller->display_name,
+                'name' => $seller->name, // Keep for backward compatibility
                 'avatar' => $seller->avatar,
                 'is_verified' => (bool) $seller->is_verified,
                 'average_rating' => $seller->average_rating,

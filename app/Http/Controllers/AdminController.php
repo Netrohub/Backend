@@ -41,7 +41,9 @@ class AdminController extends Controller
                 $search = str_replace(['%', '_'], ['\%', '\_'], $search);
                 
                 $query->where(function($q) use ($search) {
-                    $q->where('name', 'like', '%' . $search . '%')
+                    $q->where('username', 'like', '%' . $search . '%')
+                      ->orWhere('display_name', 'like', '%' . $search . '%')
+                      ->orWhere('name', 'like', '%' . $search . '%') // Backward compatibility
                       ->orWhere('email', 'like', '%' . $search . '%');
                 });
             }

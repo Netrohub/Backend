@@ -32,7 +32,16 @@ class DiscordEventEmitter
         ];
         
         try {
+            $headers = [];
+            
+            // Add webhook secret header if configured
+            $webhookSecret = config('services.discord_bot.webhook_secret');
+            if ($webhookSecret) {
+                $headers['X-Webhook-Secret'] = $webhookSecret;
+            }
+            
             $response = Http::timeout(10)
+                ->withHeaders($headers)
                 ->post($webhookUrl, $payload);
             
             if (!$response->successful()) {

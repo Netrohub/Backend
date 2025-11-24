@@ -25,7 +25,7 @@ class MemberController extends Controller
                                   ->orWhereNotNull('email_verified_at');
                         })
                         ->where('role', 'user')
-                        ->select('id', 'name', 'avatar', 'bio', 'created_at')
+                        ->select('id', 'username', 'display_name', 'name', 'avatar', 'bio', 'created_at')
                         ->orderBy('created_at', 'desc'),
                     $request,
                     $perPage, // Use custom per_page
@@ -39,7 +39,7 @@ class MemberController extends Controller
                               ->orWhereNotNull('email_verified_at');
                     })
                     ->where('role', 'user')
-                    ->select('id', 'name', 'avatar', 'bio', 'created_at')
+                    ->select('id', 'username', 'display_name', 'name', 'avatar', 'bio', 'created_at')
                     ->orderBy('created_at', 'desc'),
                 $request,
                 $perPage, // Use custom per_page
@@ -52,16 +52,25 @@ class MemberController extends Controller
 
     public function show($id)
     {
-        // Cache individual member profiles for 15 minutes
-        $cacheKey = 'member_profile_' . $id;
+        // Support both ID and username lookup
+        $isUsername = !is_numeric($id);
         
-        $member = Cache::remember($cacheKey, 900, function () use ($id) {
-            return User::where(function($query) {
-                    $query->where('is_verified', true)
-                          ->orWhereNotNull('email_verified_at');
-                })
-                ->where('id', $id)
-                ->select('id', 'name', 'avatar', 'bio', 'created_at')
+        // Cache individual member profiles for 15 minutes
+        $cacheKey = 'member_profile_' . ($isUsername ? 'username_' . $id : $id);
+        
+        $member = Cache::remember($cacheKey, 900, function () use ($id, $isUsername) {
+            $query = User::where(function($q) {
+                    $q->where('is_verified', true)
+                      ->orWhereNotNull('email_verified_at');
+                });
+            
+            if ($isUsername) {
+                $query->where('username', $id);
+            } else {
+                $query->where('id', $id);
+            }
+            
+            return $query->select('id', 'username', 'display_name', 'name', 'avatar', 'bio', 'created_at')
                 ->withCount(['listings', 'ordersAsSeller', 'ordersAsBuyer'])
                 ->firstOrFail();
         });

@@ -32,14 +32,29 @@ class DiscordBotService
         }
 
         try {
+            // Use new unified event format
+            // Remove /webhook/listing suffix if present, use /webhook instead
+            $webhookUrl = $this->webhookUrl;
+            if (str_ends_with($webhookUrl, '/webhook/listing')) {
+                $webhookUrl = str_replace('/webhook/listing', '/webhook', $webhookUrl);
+            } elseif (!str_ends_with($webhookUrl, '/webhook')) {
+                // If URL doesn't end with /webhook, append it
+                $webhookUrl = rtrim($webhookUrl, '/') . '/webhook';
+            }
+
             $payload = [
-                'id' => $listing['id'],
-                'title' => $listing['title'],
-                'description' => $listing['description'] ?? null,
-                'price' => (string) $listing['price'],
-                'category' => $listing['category'] ?? null,
-                'images' => $listing['images'] ?? [],
-                'created_at' => $listing['created_at'] ?? now()->toIso8601String(),
+                'event_type' => 'listing.created',
+                'data' => [
+                    'listing_id' => $listing['id'],
+                    'id' => $listing['id'], // Backward compatibility
+                    'title' => $listing['title'],
+                    'description' => $listing['description'] ?? null,
+                    'price' => (string) $listing['price'],
+                    'category' => $listing['category'] ?? null,
+                    'images' => $listing['images'] ?? [],
+                    'created_at' => $listing['created_at'] ?? now()->toIso8601String(),
+                ],
+                'timestamp' => now()->toIso8601String(),
             ];
 
             $headers = [
@@ -52,13 +67,13 @@ class DiscordBotService
             }
 
             Log::info('Discord Bot Webhook Request', [
-                'url' => $this->webhookUrl,
+                'url' => $webhookUrl,
                 'listing_id' => $listing['id'],
             ]);
 
             $response = Http::timeout(5)
                 ->withHeaders($headers)
-                ->post($this->webhookUrl, $payload);
+                ->post($webhookUrl, $payload);
 
             $responseData = $response->json();
 

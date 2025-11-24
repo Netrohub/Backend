@@ -71,7 +71,7 @@ class KycVerified extends Notification implements ShouldQueue
         if ($this->verified) {
             return (new MailMessage)
                 ->subject('تم التحقق من الهوية بنجاح - NXOLand')
-                ->greeting("مرحباً {$notifiable->name},")
+                ->greeting("مرحباً " . ($notifiable->username ?? $notifiable->name) . ",")
                 ->line('تم التحقق من هويتك بنجاح عبر Persona.')
                 ->line('يمكنك الآن:')
                 ->line('• إضافة إعلانات للبيع')
@@ -82,7 +82,7 @@ class KycVerified extends Notification implements ShouldQueue
         } else {
             return (new MailMessage)
                 ->subject('فشل التحقق من الهوية - NXOLand')
-                ->greeting("مرحباً {$notifiable->name},")
+                ->greeting("مرحباً " . ($notifiable->username ?? $notifiable->name) . ",")
                 ->line('لم يتم التحقق من هويتك بنجاح.')
                 ->line('الحالة: ' . $this->kycVerification->status)
                 ->line('يرجى المحاولة مرة أخرى أو الاتصال بالدعم إذا استمرت المشكلة.')

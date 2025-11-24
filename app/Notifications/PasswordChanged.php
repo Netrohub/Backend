@@ -40,7 +40,7 @@ class PasswordChanged extends Notification implements ShouldQueue
     {
         return (new MailMessage)
             ->subject('تم تغيير كلمة المرور - NXOLand')
-            ->greeting('مرحباً ' . $notifiable->name . '!')
+            ->greeting('مرحباً ' . ($notifiable->username ?? $notifiable->name) . '!')
             ->line('تم تغيير كلمة مرور حسابك بنجاح.')
             ->line('**تفاصيل التغيير:**')
             ->line('⏰ الوقت: ' . $this->time)

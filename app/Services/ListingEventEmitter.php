@@ -16,12 +16,15 @@ class ListingEventEmitter
         
         $data = [
             'listing_id' => $listing->id,
+            'id' => $listing->id, // Also include 'id' for backward compatibility
             'seller_id' => $seller->id,
             'seller_discord_id' => $seller->discord_user_id,
             'seller_username' => $seller->username,
             'title' => $listing->title,
+            'description' => $listing->description, // Include description for Discord embed
             'category' => $listing->category,
             'price' => $listing->price,
+            'images' => $listing->images ?? [], // Include images for Discord embed
             'status' => $listing->status,
             'created_at' => $listing->created_at->toIso8601String(),
         ];

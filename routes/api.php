@@ -47,7 +47,7 @@ Route::prefix('v1')->group(function () {
         ->name('verification.verify');
     Route::get('/leaderboard', [LeaderboardController::class, 'index']);
     Route::get('/members', [MemberController::class, 'index']);
-    Route::get('/members/{id}', [MemberController::class, 'show']);
+    Route::get('/members/{id}', [MemberController::class, 'show']); // Supports both ID and username
     
     // Site Settings (public read for terms & privacy)
     Route::get('/site-settings/{key}', [SiteSettingController::class, 'show']);
