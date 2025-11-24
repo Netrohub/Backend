@@ -201,6 +201,20 @@ class DiscordAuthController extends Controller
         if ($discordEmail) {
             $existingUser = User::where('email', strtolower($discordEmail))->first();
             if ($existingUser) {
+                // Check if Discord ID is already linked to another user
+                $discordLinkedUser = User::where('discord_user_id', $discordUserId)
+                    ->where('id', '!=', $existingUser->id)
+                    ->first();
+                
+                if ($discordLinkedUser) {
+                    Log::warning('Discord account already linked to another user', [
+                        'discord_user_id' => $discordUserId,
+                        'existing_user_id' => $discordLinkedUser->id,
+                        'attempted_user_id' => $existingUser->id,
+                    ]);
+                    return redirect(config('app.frontend_url') . '/auth?error=discord_already_linked');
+                }
+                
                 // Link Discord to existing email account
                 $existingUser->update([
                     'discord_user_id' => $discordUserId,
@@ -214,6 +228,14 @@ class DiscordAuthController extends Controller
             }
         }
         
+        // Double-check Discord ID isn't already linked (race condition protection)
+        $existingDiscordUser = User::where('discord_user_id', $discordUserId)->first();
+        if ($existingDiscordUser) {
+            // Discord already linked - log them in instead
+            $token = $existingDiscordUser->createToken('discord-auth-token')->plainTextToken;
+            return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+        }
+        
         // Create new user
         $username = User::generateUsername($discordUsername);
         $email = $discordEmail ?? "discord_{$discordUserId}@nxoland.local"; // Placeholder email
@@ -221,18 +243,37 @@ class DiscordAuthController extends Controller
         // Generate random password (user can set it later if needed)
         $password = Hash::make(bin2hex(random_bytes(32)));
         
-        $user = User::create([
-            'name' => $discordUsername,
-            'username' => $username,
-            'display_name' => $discordUsername,
-            'email' => $email,
-            'password' => $password,
-            'discord_user_id' => $discordUserId,
-            'discord_username' => $discordUsername,
-            'discord_avatar' => $discordAvatar,
-            'discord_connected_at' => now(),
-            'email_verified_at' => $discordEmail ? now() : null, // Auto-verify if email from Discord
-        ]);
+        try {
+            $user = User::create([
+                'name' => $discordUsername,
+                'username' => $username,
+                'display_name' => $discordUsername,
+                'email' => $email,
+                'password' => $password,
+                'discord_user_id' => $discordUserId,
+                'discord_username' => $discordUsername,
+                'discord_avatar' => $discordAvatar,
+                'discord_connected_at' => now(),
+                'email_verified_at' => $discordEmail ? now() : null, // Auto-verify if email from Discord
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Handle unique constraint violation (race condition)
+            if ($e->getCode() === '23505' || str_contains($e->getMessage(), 'discord_user_id')) {
+                Log::warning('Discord user ID unique constraint violation during user creation', [
+                    'discord_user_id' => $discordUserId,
+                    'error' => $e->getMessage(),
+                ]);
+                
+                // Try to find and log in the existing user
+                $existingUser = User::where('discord_user_id', $discordUserId)->first();
+                if ($existingUser) {
+                    $token = $existingUser->createToken('discord-auth-token')->plainTextToken;
+                    return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+                }
+            }
+            
+            throw $e;
+        }
         
         // Create wallet for new user
         if (!$user->wallet) {
@@ -266,16 +307,34 @@ class DiscordAuthController extends Controller
             ->first();
         
         if ($existingUser) {
+            Log::warning('Attempt to link Discord account already linked to another user', [
+                'discord_user_id' => $discordUserId,
+                'existing_user_id' => $existingUser->id,
+                'attempted_user_id' => $user->id,
+            ]);
             return redirect(config('app.frontend_url') . '/settings?error=discord_already_linked');
         }
         
-        // Link Discord to current user
-        $user->update([
-            'discord_user_id' => $discordUserId,
-            'discord_username' => $discordUsername,
-            'discord_avatar' => $discordAvatar,
-            'discord_connected_at' => now(),
-        ]);
+        // Link Discord to current user (with error handling for race conditions)
+        try {
+            $user->update([
+                'discord_user_id' => $discordUserId,
+                'discord_username' => $discordUsername,
+                'discord_avatar' => $discordAvatar,
+                'discord_connected_at' => now(),
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Handle unique constraint violation (race condition)
+            if ($e->getCode() === '23505' || str_contains($e->getMessage(), 'discord_user_id')) {
+                Log::warning('Discord user ID unique constraint violation during connect', [
+                    'discord_user_id' => $discordUserId,
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+                return redirect(config('app.frontend_url') . '/settings?error=discord_already_linked');
+            }
+            throw $e;
+        }
         
         return redirect(config('app.frontend_url') . '/settings?discord_connected=true');
     }
