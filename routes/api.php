@@ -79,6 +79,10 @@ Route::prefix('v1')->group(function () {
     // TikTok OAuth Callback (no auth required - receives code from TikTok)
     Route::get('/tiktok/callback', [\App\Http\Controllers\TikTokController::class, 'callback']);
 
+    // Discord OAuth2 routes (no auth required for redirect/callback)
+    Route::get('/auth/discord/redirect', [\App\Http\Controllers\DiscordAuthController::class, 'redirect']);
+    Route::get('/auth/discord/callback', [\App\Http\Controllers\DiscordAuthController::class, 'callback']);
+
     // Protected routes
         Route::middleware('auth:sanctum')->group(function () {
         // Auth
@@ -100,6 +104,11 @@ Route::prefix('v1')->group(function () {
             Route::get('/profile', [\App\Http\Controllers\TikTokController::class, 'getProfile']);
             Route::post('/verify-bio', [\App\Http\Controllers\TikTokController::class, 'verifyBio'])->middleware('throttle:10,1');
             Route::post('/disconnect', [\App\Http\Controllers\TikTokController::class, 'disconnect']);
+        });
+        
+        // Discord OAuth (connect/disconnect)
+        Route::prefix('discord')->group(function () {
+            Route::post('/disconnect', [\App\Http\Controllers\DiscordAuthController::class, 'disconnect']);
         });
         
         Route::prefix('kyc')->middleware('throttle:30,1')->group(function () {
@@ -143,7 +152,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/disputes/{dispute}', [DisputeController::class, 'show']);
         });
         
-        Route::middleware('throttle:30,60')->group(function () {
+        Route::middleware(['throttle:30,60', \App\Http\Middleware\RequireDiscordForDisputes::class])->group(function () {
             Route::post('/disputes', [DisputeController::class, 'store']);
             Route::post('/disputes/{dispute}/cancel', [DisputeController::class, 'cancel']);
         });
@@ -202,7 +211,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/settings/{key}', [SettingsController::class, 'show']);
 
         // Listing and image management (only verified users can upload or create)
-        Route::middleware(['kycVerified', 'throttle:30,1'])->group(function () {
+        Route::middleware(['kycVerified', 'throttle:30,1', \App\Http\Middleware\RequireDiscordForSellers::class])->group(function () {
             Route::post('/listings', [ListingController::class, 'store']);
             Route::put('/listings/{id}', [ListingController::class, 'update']);
             Route::delete('/listings/{id}', [ListingController::class, 'destroy']);

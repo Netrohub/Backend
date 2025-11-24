@@ -60,6 +60,7 @@ class PaymentController extends Controller
 
         if ($existingPayment && $existingPayment->paylink_transaction_no) {
             // Return existing payment info instead of creating duplicate
+            // This allows users to retry payment if they had issues on previous page
             $paylinkResponse = $existingPayment->paylink_response ?? [];
             $paymentUrl = $paylinkResponse['url'] ?? null;
             
@@ -76,12 +77,14 @@ class PaymentController extends Controller
                 }
             }
             
+            // Return 200 with payment URL to allow user to retry payment
+            // Frontend will handle redirecting to payment URL
             return response()->json([
-                'message' => 'Payment already initiated for this order',
+                'message' => 'Payment already initiated for this order. You can continue with the existing payment.',
                 'payment' => $existingPayment,
                 'paymentUrl' => $paymentUrl,
                 'error_code' => 'PAYMENT_ALREADY_EXISTS',
-            ], 400);
+            ], 200);
         }
 
         // Convert USD amount to SAR for Paylink payment gateway

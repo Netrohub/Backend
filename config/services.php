@@ -77,6 +77,14 @@ return [
         'webhook_secret' => env('DISCORD_BOT_WEBHOOK_SECRET'),
     ],
 
+    'discord' => [
+        'client_id' => env('DISCORD_CLIENT_ID'),
+        'client_secret' => env('DISCORD_CLIENT_SECRET'),
+        'redirect_uri' => env('DISCORD_REDIRECT_URI', env('APP_URL') . '/api/v1/auth/discord/callback'),
+        'scopes' => env('DISCORD_OAUTH_SCOPES', 'identify email'),
+        'bot_webhook_url' => env('DISCORD_BOT_WEBHOOK_URL'),
+    ],
+
     'paylink' => [
         'base_url' => env('PAYLINK_BASE_URL', 'https://restpilot.paylink.sa'),
         'api_id' => env('PAYLINK_API_ID'),

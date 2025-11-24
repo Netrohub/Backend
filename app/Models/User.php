@@ -25,6 +25,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected $fillable = [
         'name',
         'username',
+        'display_name',
         'email',
         'password',
         'phone',
@@ -38,6 +39,11 @@ class User extends Authenticatable implements MustVerifyEmail
         'is_verified',
         'avatar',
         'bio',
+        'discord_user_id',
+        'discord_username',
+        'discord_avatar',
+        'discord_connected_at',
+        'is_seller',
     ];
 
     /**
@@ -68,6 +74,8 @@ class User extends Authenticatable implements MustVerifyEmail
             'is_verified' => 'boolean',
             'kyc_verified_at' => 'datetime',
             'phone_verified_at' => 'datetime',
+            'discord_connected_at' => 'datetime',
+            'is_seller' => 'boolean',
         ];
     }
 
@@ -175,6 +183,51 @@ class User extends Authenticatable implements MustVerifyEmail
     public function getOfficialNameAttribute(): string
     {
         return $this->username ?? $this->name ?? '';
+    }
+
+    /**
+     * Check if user has Discord connected
+     */
+    public function hasDiscord(): bool
+    {
+        return !is_null($this->discord_user_id);
+    }
+
+    /**
+     * Generate a unique username from a base string
+     */
+    public static function generateUsername(string $base): string
+    {
+        // Normalize: lowercase, alphanumeric + underscore only
+        $username = strtolower(preg_replace('/[^a-z0-9_]/', '', $base));
+        
+        // Ensure minimum length
+        if (strlen($username) < 3) {
+            $username = $username . str_pad('', 3 - strlen($username), '0');
+        }
+        
+        // Truncate to max length
+        if (strlen($username) > 20) {
+            $username = substr($username, 0, 20);
+        }
+        
+        // Ensure uniqueness
+        $finalUsername = $username;
+        $counter = 1;
+        while (static::where('username', $finalUsername)->exists()) {
+            $suffix = '_' . $counter;
+            $maxLength = 20 - strlen($suffix);
+            $finalUsername = substr($username, 0, $maxLength) . $suffix;
+            $counter++;
+            
+            // Prevent infinite loop
+            if ($counter > 9999) {
+                $finalUsername = substr($username, 0, 10) . '_' . \Illuminate\Support\Str::random(6);
+                break;
+            }
+        }
+        
+        return $finalUsername;
     }
 
     // Helper methods

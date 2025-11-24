@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\Dispute;
 use App\Models\Order;
 use App\Models\Wallet;
+use App\Notifications\DisputeCreated;
 use App\Notifications\DisputeResolved;
+use App\Services\DisputeEventEmitter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -112,6 +114,16 @@ class DisputeController extends Controller
         $order->buyer->notify(new DisputeCreated($dispute));
         $order->seller->notify(new DisputeCreated($dispute));
 
+        // Emit Discord event (non-blocking)
+        try {
+            DisputeEventEmitter::created($dispute);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Discord dispute event failed', [
+                'dispute_id' => $dispute->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         return response()->json($dispute->load(['order', 'initiator']), 201);
     }
 
@@ -149,6 +161,7 @@ class DisputeController extends Controller
         ]);
 
         $oldStatus = $dispute->status;
+        $oldResolution = $dispute->resolution;
         $dispute->status = $validated['status'];
         $dispute->resolved_by = $user->id;
         $dispute->resolved_at = now();
@@ -200,6 +213,31 @@ class DisputeController extends Controller
             $order = $dispute->order;
             $order->buyer->notify(new DisputeResolved($dispute, $normalizedResolution));
             $order->seller->notify(new DisputeResolved($dispute, $normalizedResolution));
+            
+            // Emit Discord resolved event
+            try {
+                DisputeEventEmitter::resolved($dispute);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Discord dispute resolved event failed', [
+                    'dispute_id' => $dispute->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        } else {
+            // Emit updated event for status changes
+            try {
+                DisputeEventEmitter::updated($dispute, [
+                    'old_status' => $oldStatus,
+                    'new_status' => $validated['status'],
+                    'old_resolution' => $oldResolution,
+                    'new_resolution' => $normalizedResolution,
+                ]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('Discord dispute updated event failed', [
+                    'dispute_id' => $dispute->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         // Handle financial resolution when in escrow

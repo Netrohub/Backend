@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Listing;
 use App\Models\Order;
+use App\Services\ListingEventEmitter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
@@ -264,6 +265,16 @@ class ListingController extends Controller
             ]);
         }
 
+        // Emit Discord event via event emitter (non-blocking)
+        try {
+            ListingEventEmitter::created($listing);
+        } catch (\Exception $e) {
+            Log::error('Discord listing event failed', [
+                'listing_id' => $listing->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         return response()->json($listing, 201);
     }
 
@@ -369,6 +380,7 @@ class ListingController extends Controller
         }
 
         $oldCategory = $listing->category;
+        $oldStatus = $listing->status;
 
         // Update basic fields
         $basicFields = ['title', 'description', 'price', 'category', 'images', 'status', 'account_metadata'];
@@ -411,12 +423,29 @@ class ListingController extends Controller
             $request
         );
 
+        // Track status change for Discord event
+        $newStatus = $listing->status;
+        
         // Invalidate cache for both old and new categories if category changed
         if (isset($validated['category']) && $validated['category'] !== $oldCategory) {
             Cache::forget('listings_' . md5($oldCategory . ''));
             Cache::forget('listings_' . md5($validated['category'] . ''));
         } else {
             Cache::forget('listings_' . md5($listing->category . ''));
+        }
+
+        // Emit Discord events (non-blocking)
+        try {
+            if (isset($validated['status']) && $oldStatus !== $newStatus) {
+                ListingEventEmitter::statusChanged($listing, $oldStatus, $newStatus);
+            } else {
+                ListingEventEmitter::updated($listing, array_keys($validated));
+            }
+        } catch (\Exception $e) {
+            Log::error('Discord listing event failed', [
+                'listing_id' => $listing->id,
+                'error' => $e->getMessage(),
+            ]);
         }
 
         return response()->json($listing->load('user'));
