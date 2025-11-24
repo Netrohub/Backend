@@ -51,9 +51,10 @@ return new class extends Migration
             }
         });
         
-        // Step 2: Ensure username is not null and unique
+        // Step 2: Ensure username is not null
+        // Note: Unique constraint already exists from previous migration
         Schema::table('users', function (Blueprint $table) {
-            $table->string('username')->nullable(false)->unique()->change();
+            $table->string('username')->nullable(false)->change();
         });
         
         // Step 3: Clean up orphaned foreign keys in related tables
