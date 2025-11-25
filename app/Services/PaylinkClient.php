@@ -47,7 +47,10 @@ class PaylinkClient
             'persist_token' => $persistToken,
         ]);
 
-        $response = Http::post($this->baseUrl . '/api/auth', [
+        // Ensure no double slashes in URL
+        $authUrl = rtrim($this->baseUrl, '/') . '/api/auth';
+        
+        $response = Http::post($authUrl, [
             'apiId' => $this->apiId,
             'secretKey' => $this->secretKey,
             'persistToken' => $persistToken,
