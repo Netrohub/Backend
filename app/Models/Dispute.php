@@ -21,6 +21,8 @@ class Dispute extends Model
         'resolution',
         'resolution_notes',
         'resolved_at',
+        'discord_thread_id',
+        'discord_channel_id',
     ];
 
     protected function casts(): array

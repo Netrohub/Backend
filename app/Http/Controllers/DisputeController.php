@@ -53,10 +53,27 @@ class DisputeController extends Controller
 
         $order = Order::findOrFail($validated['order_id']);
         $user = $request->user();
+        $buyer = $order->buyer;
+        $seller = $order->seller;
 
         // Only buyer or seller can create dispute
         if ($order->buyer_id !== $user->id && $order->seller_id !== $user->id) {
             return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+        }
+
+        // Require Discord connection for both buyer and seller
+        if (!$buyer->discord_user_id) {
+            return response()->json([
+                'message' => 'Buyer must connect Discord account to create disputes.',
+                'error' => 'discord_required_for_buyer',
+            ], 400);
+        }
+
+        if (!$seller->discord_user_id) {
+            return response()->json([
+                'message' => 'Seller must connect Discord account to create disputes.',
+                'error' => 'discord_required_for_seller',
+            ], 400);
         }
 
         // Check if dispute already exists

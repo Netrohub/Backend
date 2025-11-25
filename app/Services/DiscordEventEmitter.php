@@ -12,9 +12,9 @@ class DiscordEventEmitter
      * 
      * @param string $eventType
      * @param array $data
-     * @return bool
+     * @return array|bool Response data if successful, false on failure
      */
-    public static function emit(string $eventType, array $data): bool
+    public static function emit(string $eventType, array $data)
     {
         $webhookUrl = config('services.discord.bot_webhook_url');
         
@@ -53,11 +53,15 @@ class DiscordEventEmitter
                 return false;
             }
             
+            $responseData = $response->json();
+            
             Log::info('Discord event emitted successfully', [
                 'event_type' => $eventType,
+                'response' => $responseData,
             ]);
             
-            return true;
+            // Return response data (may contain thread_id for disputes)
+            return $responseData ?: true;
         } catch (\Exception $e) {
             Log::error('Discord webhook exception', [
                 'event_type' => $eventType,

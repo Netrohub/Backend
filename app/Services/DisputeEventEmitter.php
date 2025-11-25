@@ -9,17 +9,20 @@ use App\Models\User;
 class DisputeEventEmitter
 {
     /**
-     * Emit dispute.created event
+     * Emit dispute.created event and save thread_id
      */
     public static function created(Dispute $dispute): bool
     {
         $order = $dispute->order;
+        $listing = $order->listing;
         $buyer = $order->buyer;
         $seller = $order->seller;
         
         $data = [
             'dispute_id' => $dispute->id,
             'order_id' => $order->id,
+            'listing_id' => $listing->id ?? null,
+            'category' => $listing->category ?? null,
             'buyer_id' => $buyer->id,
             'seller_id' => $seller->id,
             'buyer_discord_id' => $buyer->discord_user_id,
@@ -34,7 +37,19 @@ class DisputeEventEmitter
             'created_at' => $dispute->created_at->toIso8601String(),
         ];
         
-        return DiscordEventEmitter::emit('dispute.created', $data);
+        $response = DiscordEventEmitter::emit('dispute.created', $data);
+        
+        // If response contains thread_id, save it to dispute
+        if ($response && is_array($response) && isset($response['result'])) {
+            $result = $response['result'];
+            if (isset($result['thread_id']) && isset($result['channel_id'])) {
+                $dispute->discord_thread_id = $result['thread_id'];
+                $dispute->discord_channel_id = $result['channel_id'];
+                $dispute->save();
+            }
+        }
+        
+        return $response !== false;
     }
 
     /**

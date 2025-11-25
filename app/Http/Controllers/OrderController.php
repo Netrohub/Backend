@@ -55,6 +55,18 @@ class OrderController extends Controller
                     throw new \Exception(MessageHelper::ORDER_CANNOT_BUY_OWN);
                 }
 
+                // Require Discord connection for buyer
+                $buyer = $request->user();
+                if (!$buyer->discord_user_id) {
+                    throw new \Exception('Buyer must connect Discord account to create orders.');
+                }
+
+                // Require Discord connection for seller
+                $seller = $listing->user;
+                if (!$seller->discord_user_id) {
+                    throw new \Exception('Seller must connect Discord account to receive orders.');
+                }
+
                 // Re-check status after lock (prevents race condition)
                 if ($listing->status !== 'active') {
                     throw new \Exception(MessageHelper::ORDER_NOT_AVAILABLE);
