@@ -102,6 +102,8 @@ class DisputeEventEmitter
         $data = [
             'dispute_id' => $dispute->id,
             'order_id' => $order->id,
+            'listing_id' => $order->listing->id ?? null,
+            'category' => $order->listing->category ?? null,
             'buyer_id' => $buyer->id,
             'seller_id' => $seller->id,
             'buyer_discord_id' => $buyer->discord_user_id,
@@ -112,6 +114,8 @@ class DisputeEventEmitter
             'resolved_by' => $dispute->resolved_by,
             'resolver_username' => $resolver?->username,
             'resolved_at' => $dispute->resolved_at->toIso8601String(),
+            'discord_thread_id' => $dispute->discord_thread_id,
+            'discord_channel_id' => $dispute->discord_channel_id,
         ];
         
         $response = DiscordEventEmitter::emit('dispute.resolved', $data);
