@@ -131,6 +131,7 @@ class PaymentController extends Controller
                 // Create payment record
                 $payment = Payment::create([
                     'order_id' => $order->id,
+                    'user_id' => $order->buyer_id, // Store buyer ID for direct tracking
                     'paylink_transaction_no' => $paylinkResponse['transactionNo'],
                     'status' => 'initiated',
                     'amount' => $order->amount,

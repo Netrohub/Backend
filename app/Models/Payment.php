@@ -11,6 +11,7 @@ class Payment extends Model
 
     protected $fillable = [
         'order_id',
+        'user_id',
         'tap_charge_id',
         'tap_reference',
         'paylink_transaction_no',
@@ -38,5 +39,10 @@ class Payment extends Model
     public function order()
     {
         return $this->belongsTo(Order::class);
+    }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
     }
 }
