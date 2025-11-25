@@ -12,9 +12,7 @@ class ListingCategories
 {
     // Gaming Account Categories
     const GAMING_WOS = 'wos_accounts';
-    const GAMING_PURE_SNIPER = 'pure_sniper_accounts';
-    const GAMING_AGE_OF_EMPIRES = 'age_of_empires_accounts';
-    const GAMING_HONOR_OF_KINGS = 'honor_of_kings_accounts';
+    const GAMING_KINGSHOT = 'kingshot_accounts';
     const GAMING_PUBG = 'pubg_accounts';
     const GAMING_FORTNITE = 'fortnite_accounts';
 
@@ -32,9 +30,7 @@ class ListingCategories
         return [
             // Gaming
             self::GAMING_WOS,
-            self::GAMING_PURE_SNIPER,
-            self::GAMING_AGE_OF_EMPIRES,
-            self::GAMING_HONOR_OF_KINGS,
+            self::GAMING_KINGSHOT,
             self::GAMING_PUBG,
             self::GAMING_FORTNITE,
             // Social
@@ -52,9 +48,7 @@ class ListingCategories
     {
         return [
             self::GAMING_WOS,
-            self::GAMING_PURE_SNIPER,
-            self::GAMING_AGE_OF_EMPIRES,
-            self::GAMING_HONOR_OF_KINGS,
+            self::GAMING_KINGSHOT,
             self::GAMING_PUBG,
             self::GAMING_FORTNITE,
         ];
@@ -116,9 +110,7 @@ class ListingCategories
     {
         $names = [
             self::GAMING_WOS => 'Whiteout Survival',
-            self::GAMING_PURE_SNIPER => 'Pure Sniper',
-            self::GAMING_AGE_OF_EMPIRES => 'Age of Empires Mobile',
-            self::GAMING_HONOR_OF_KINGS => 'Honor of Kings',
+            self::GAMING_KINGSHOT => 'KingShot',
             self::GAMING_PUBG => 'PUBG Mobile',
             self::GAMING_FORTNITE => 'Fortnite',
             self::SOCIAL_TIKTOK => 'TikTok',
