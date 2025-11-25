@@ -83,7 +83,10 @@ class DisputeEventEmitter
             'updated_at' => $dispute->updated_at->toIso8601String(),
         ];
         
-        return DiscordEventEmitter::emit('dispute.updated', $data);
+        $response = DiscordEventEmitter::emit('dispute.updated', $data);
+        
+        // Return bool (true if successful, false otherwise)
+        return $response !== false;
     }
 
     /**
@@ -111,7 +114,10 @@ class DisputeEventEmitter
             'resolved_at' => $dispute->resolved_at->toIso8601String(),
         ];
         
-        return DiscordEventEmitter::emit('dispute.resolved', $data);
+        $response = DiscordEventEmitter::emit('dispute.resolved', $data);
+        
+        // Return bool (true if successful, false otherwise)
+        return $response !== false;
     }
 }
 
