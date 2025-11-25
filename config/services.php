@@ -82,7 +82,7 @@ return [
         'client_secret' => env('DISCORD_CLIENT_SECRET'),
         'redirect_uri' => env('DISCORD_REDIRECT_URI', env('APP_URL') . '/api/v1/auth/discord/callback'),
         'scopes' => env('DISCORD_OAUTH_SCOPES', 'identify email guilds.join'),
-        'bot_webhook_url' => env('DISCORD_BOT_WEBHOOK_URL'),
+        'bot_webhook_url' => env('DISCORD_BOT_WEBHOOK_URL'), // Use same env var as discord_bot.webhook_url
         'bot_token' => env('DISCORD_BOT_TOKEN'), // Bot token for adding users to server
         'guild_id' => env('DISCORD_GUILD_ID'), // Server/Guild ID for auto-joining
     ],
