@@ -102,13 +102,25 @@ class Listing extends Model
             return true;
         }
 
-        // Buyer can access if they have completed order
+        // Buyer can access if they have completed order (not refunded)
         $completedOrder = \App\Models\Order::where('listing_id', $this->id)
             ->where('buyer_id', $user->id)
             ->where('status', 'completed')
-            ->exists();
+            ->first();
 
-        return $completedOrder;
+        if (!$completedOrder) {
+            return false;
+        }
+
+        // Check if order was resolved in favor of buyer (refund) - hide credentials
+        $dispute = $completedOrder->dispute;
+        if ($dispute && 
+            $dispute->status === 'resolved' && 
+            $dispute->resolution === 'refund_buyer') {
+            return false; // Hide credentials if refunded to buyer
+        }
+
+        return true;
     }
 
     // Relationships

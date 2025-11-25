@@ -577,12 +577,19 @@ class ListingController extends Controller
                 ->first();
 
             if ($buyerOrder) {
-                if (in_array($buyerOrder->status, ['escrow_hold', 'completed'], true)) {
+                // Check if order was resolved in favor of buyer (refund) - hide credentials
+                $dispute = $buyerOrder->dispute;
+                $isRefundedToBuyer = $dispute && 
+                    $dispute->status === 'resolved' && 
+                    $dispute->resolution === 'refund_buyer';
+                
+                // Only allow access if order is completed (not cancelled/refunded)
+                if ($buyerOrder->status === 'completed' && !$isRefundedToBuyer) {
                     $canAccessCredentials = true;
-                }
-
-                if ($buyerOrder->status === 'completed') {
                     $canViewBillImages = true;
+                } elseif ($buyerOrder->status === 'escrow_hold' && !$isRefundedToBuyer) {
+                    // Allow access during escrow_hold (before dispute resolution)
+                    $canAccessCredentials = true;
                 }
             }
         }
