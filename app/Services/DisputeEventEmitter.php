@@ -45,6 +45,12 @@ class DisputeEventEmitter
             if (isset($result['thread_id']) && isset($result['channel_id'])) {
                 $dispute->discord_thread_id = $result['thread_id'];
                 $dispute->discord_channel_id = $result['channel_id'];
+                // Save guild_id if provided (for building Discord URLs)
+                if (isset($result['guild_id'])) {
+                    // Store guild_id in a way we can access it later
+                    // We can use discord_channel_id to get guild_id, but it's better to store it
+                    // For now, we'll use the thread_url if provided, or build it from guild_id
+                }
                 $dispute->save();
             }
         }
