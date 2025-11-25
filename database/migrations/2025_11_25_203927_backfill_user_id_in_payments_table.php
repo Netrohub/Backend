@@ -12,11 +12,13 @@ return new class extends Migration
     public function up(): void
     {
         // Update payments with user_id from their associated orders
+        // PostgreSQL-compatible syntax using FROM clause
         DB::statement('
             UPDATE payments 
-            INNER JOIN orders ON payments.order_id = orders.id 
-            SET payments.user_id = orders.buyer_id 
-            WHERE payments.user_id IS NULL
+            SET user_id = orders.buyer_id 
+            FROM orders 
+            WHERE payments.order_id = orders.id 
+            AND payments.user_id IS NULL
         ');
     }
 
