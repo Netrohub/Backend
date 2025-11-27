@@ -8,15 +8,54 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class KycVerified extends Notification implements ShouldQueue
 {
     use Queueable;
 
+    // Store essential data to handle deleted models
+    public ?int $kycId = null;
+    public ?string $kycStatus = null;
+    public ?string $personaInquiryId = null;
+    public bool $verified;
+
     public function __construct(
-        public KycVerification $kycVerification,
-        public bool $verified
-    ) {}
+        public ?KycVerification $kycVerification = null,
+        bool $verified = false
+    ) {
+        $this->verified = $verified;
+        
+        // Store essential data in case model is deleted
+        if ($kycVerification) {
+            $this->kycId = $kycVerification->id;
+            $this->kycStatus = $kycVerification->status;
+            $this->personaInquiryId = $kycVerification->persona_inquiry_id;
+        }
+    }
+
+    /**
+     * Get KYC data, handling deleted models
+     */
+    private function getKycData(): array
+    {
+        // Try to reload model if it exists
+        if ($this->kycId) {
+            try {
+                $this->kycVerification = KycVerification::findOrFail($this->kycId);
+                $this->kycStatus = $this->kycVerification->status;
+                $this->personaInquiryId = $this->kycVerification->persona_inquiry_id;
+            } catch (ModelNotFoundException $e) {
+                // Model was deleted, use stored data
+            }
+        }
+
+        return [
+            'id' => $this->kycVerification?->id ?? $this->kycId ?? 0,
+            'status' => $this->kycVerification?->status ?? $this->kycStatus ?? 'unknown',
+            'persona_inquiry_id' => $this->kycVerification?->persona_inquiry_id ?? $this->personaInquiryId,
+        ];
+    }
 
     /**
      * Get the notification's delivery channels.
@@ -33,6 +72,8 @@ class KycVerified extends Notification implements ShouldQueue
      */
     public function toDatabase(object $notifiable): array
     {
+        $kycData = $this->getKycData();
+        
         if ($this->verified) {
             return [
                 'type' => 'kyc',
@@ -41,9 +82,9 @@ class KycVerified extends Notification implements ShouldQueue
                 'icon' => 'ShieldCheck',
                 'color' => 'text-green-400',
                 'data' => [
-                    'kyc_id' => $this->kycVerification->id,
+                    'kyc_id' => $kycData['id'],
                     'status' => 'verified',
-                    'inquiry_id' => $this->kycVerification->persona_inquiry_id,
+                    'inquiry_id' => $kycData['persona_inquiry_id'],
                 ],
                 'read' => false,
             ];
@@ -55,9 +96,9 @@ class KycVerified extends Notification implements ShouldQueue
                 'icon' => 'AlertCircle',
                 'color' => 'text-red-400',
                 'data' => [
-                    'kyc_id' => $this->kycVerification->id,
-                    'status' => $this->kycVerification->status,
-                    'inquiry_id' => $this->kycVerification->persona_inquiry_id,
+                    'kyc_id' => $kycData['id'],
+                    'status' => $kycData['status'],
+                    'inquiry_id' => $kycData['persona_inquiry_id'],
                 ],
                 'read' => false,
             ];
@@ -69,6 +110,8 @@ class KycVerified extends Notification implements ShouldQueue
      */
     public function toMail(object $notifiable): MailMessage
     {
+        $kycData = $this->getKycData();
+        
         if ($this->verified) {
             return (new MailMessage)
                 ->subject('تم التحقق من الهوية بنجاح - NXOLand')
@@ -85,7 +128,7 @@ class KycVerified extends Notification implements ShouldQueue
                 ->subject('فشل التحقق من الهوية - NXOLand')
                 ->greeting("مرحباً " . ($notifiable->username ?? $notifiable->name) . ",")
                 ->line('لم يتم التحقق من هويتك بنجاح.')
-                ->line('الحالة: ' . $this->kycVerification->status)
+                ->line('الحالة: ' . $kycData['status'])
                 ->line('يرجى المحاولة مرة أخرى أو الاتصال بالدعم إذا استمرت المشكلة.')
                 ->action('إعادة المحاولة', SecurityHelper::frontendUrl('/kyc'))
                 ->line('إذا كنت بحاجة إلى مساعدة، يرجى الاتصال بالدعم.');
