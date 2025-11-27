@@ -148,10 +148,37 @@ class SecurityHelper
      */
     public static function frontendUrl(string $path = ''): string
     {
-        $frontendUrl = config('app.frontend_url', config('app.url'));
-        $base = rtrim($frontendUrl, '/');
-        $path = ltrim($path, '/');
-        return $base . ($path ? '/' . $path : '');
+        try {
+            $frontendUrl = config('app.frontend_url');
+            
+            // If frontend_url is not set, try to get from APP_URL and check if it's a frontend URL
+            if (empty($frontendUrl)) {
+                $appUrl = config('app.url', 'https://nxoland.com');
+                // If APP_URL looks like a backend URL (contains 'api' or port), use default frontend
+                if (str_contains($appUrl, '/api') || str_contains($appUrl, ':8000') || str_contains($appUrl, ':3000')) {
+                    $frontendUrl = 'https://nxoland.com';
+                } else {
+                    $frontendUrl = $appUrl;
+                }
+            }
+            
+            // Ensure we have a valid URL
+            if (empty($frontendUrl)) {
+                $frontendUrl = 'https://nxoland.com';
+            }
+            
+            $base = rtrim($frontendUrl, '/');
+            $path = ltrim($path, '/');
+            return $base . ($path ? '/' . $path : '');
+        } catch (\Exception $e) {
+            // Fallback to default frontend URL if anything goes wrong
+            \Log::warning('SecurityHelper::frontendUrl() error', [
+                'error' => $e->getMessage(),
+                'path' => $path,
+            ]);
+            $path = ltrim($path, '/');
+            return 'https://nxoland.com' . ($path ? '/' . $path : '');
+        }
     }
 }
 
