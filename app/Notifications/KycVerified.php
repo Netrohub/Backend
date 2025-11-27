@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\KycVerification;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -77,7 +78,7 @@ class KycVerified extends Notification implements ShouldQueue
                 ->line('• إضافة إعلانات للبيع')
                 ->line('• استخدام جميع ميزات المنصة')
                 ->line('• إتمام المعاملات بأمان')
-                ->action('عرض الملف الشخصي', url('/profile'))
+                ->action('عرض الملف الشخصي', SecurityHelper::frontendUrl('/profile'))
                 ->line('شكراً لاستخدامك NXOLand!');
         } else {
             return (new MailMessage)
@@ -86,7 +87,7 @@ class KycVerified extends Notification implements ShouldQueue
                 ->line('لم يتم التحقق من هويتك بنجاح.')
                 ->line('الحالة: ' . $this->kycVerification->status)
                 ->line('يرجى المحاولة مرة أخرى أو الاتصال بالدعم إذا استمرت المشكلة.')
-                ->action('إعادة المحاولة', url('/kyc'))
+                ->action('إعادة المحاولة', SecurityHelper::frontendUrl('/kyc'))
                 ->line('إذا كنت بحاجة إلى مساعدة، يرجى الاتصال بالدعم.');
         }
     }

@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\WithdrawalRequest;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -62,7 +63,7 @@ class WithdrawalApproved extends Notification implements ShouldQueue
             ->line("- Amount: $" . number_format($this->withdrawalRequest->amount, 2))
             ->line("- Status: Processing")
             ->line("- Bank: {$this->withdrawalRequest->bank_name}")
-            ->action('View Withdrawal Status', url('/wallet'))
+            ->action('View Withdrawal Status', SecurityHelper::frontendUrl('/wallet'))
             ->line('You will be notified once the transfer is completed.')
             ->line('Thank you for using NXOLand!');
     }

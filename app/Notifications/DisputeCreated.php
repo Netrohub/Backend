@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Dispute;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -69,7 +70,7 @@ class DisputeCreated extends Notification implements ShouldQueue
                 ->line("- Description: {$this->dispute->description}")
                 ->line("- Status: Under Review")
                 ->line("Our team will review your dispute and respond within 24-48 hours.")
-                ->action('View Dispute', url('/disputes/' . $this->dispute->id))
+                ->action('View Dispute', SecurityHelper::frontendUrl('/disputes/' . $this->dispute->id))
                 ->line('Thank you for your patience.');
         } else {
             return (new MailMessage)
@@ -83,7 +84,7 @@ class DisputeCreated extends Notification implements ShouldQueue
                 ->line("- Status: Under Review")
                 ->line("Our team will review the dispute and respond within 24-48 hours.")
                 ->line("Funds for this order are currently on hold until the dispute is resolved.")
-                ->action('View Dispute', url('/disputes/' . $this->dispute->id))
+                ->action('View Dispute', SecurityHelper::frontendUrl('/disputes/' . $this->dispute->id))
                 ->line('If you have any questions, please contact support.');
         }
     }

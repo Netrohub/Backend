@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Order;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -63,7 +64,7 @@ class OrderStatusChanged extends Notification implements ShouldQueue
                     ? 'Thank you for your purchase!' 
                     : 'Funds have been released to your wallet.');
             })
-            ->action('View Order', url('/orders/' . $this->order->id))
+            ->action('View Order', SecurityHelper::frontendUrl('/orders/' . $this->order->id))
             ->line('Thank you for using NXOLand!');
     }
 }

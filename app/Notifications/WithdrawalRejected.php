@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\WithdrawalRequest;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -63,7 +64,7 @@ class WithdrawalRejected extends Notification implements ShouldQueue
             ->line("- Request ID: #{$this->withdrawalRequest->id}")
             ->line("- Amount: $" . number_format($this->withdrawalRequest->amount, 2))
             ->line("- Status: Rejected")
-            ->action('View Wallet', url('/wallet'))
+            ->action('View Wallet', SecurityHelper::frontendUrl('/wallet'))
             ->line('If you have any questions, please contact support.')
             ->line('Thank you for using NXOLand!');
     }

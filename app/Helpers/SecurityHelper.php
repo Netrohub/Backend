@@ -139,5 +139,19 @@ class SecurityHelper
 
         return false;
     }
+
+    /**
+     * Generate a frontend URL (never expose backend URLs to users)
+     * 
+     * @param string $path The path to append to frontend URL (e.g., '/orders/123')
+     * @return string Full frontend URL
+     */
+    public static function frontendUrl(string $path = ''): string
+    {
+        $frontendUrl = config('app.frontend_url', config('app.url'));
+        $base = rtrim($frontendUrl, '/');
+        $path = ltrim($path, '/');
+        return $base . ($path ? '/' . $path : '');
+    }
 }
 

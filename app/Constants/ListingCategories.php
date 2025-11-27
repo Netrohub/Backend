@@ -6,7 +6,7 @@ namespace App\Constants;
  * Listing Categories Constants
  * 
  * Defines all valid listing categories for the platform.
- * Categories are organized by type: gaming accounts and social media accounts.
+ * Categories are organized by type: digital gaming products and social media accounts.
  */
 class ListingCategories
 {

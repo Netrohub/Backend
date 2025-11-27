@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -53,7 +54,7 @@ class PasswordChanged extends Notification implements ShouldQueue
             ->line('')
             ->line('⚠️ **إذا لم تقم بهذا التغيير:**')
             ->line('يرجى الاتصال بفريق الدعم فوراً على support@nxoland.com')
-            ->action('تسجيل الدخول إلى حسابك', url('/auth'))
+            ->action('تسجيل الدخول إلى حسابك', SecurityHelper::frontendUrl('/auth'))
             ->line('شكراً لاستخدام منصة NXOLand!')
             ->salutation('مع أطيب التحيات، فريق NXOLand');
     }

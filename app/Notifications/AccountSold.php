@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use App\Models\Listing;
 use App\Models\Order;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -49,8 +50,8 @@ class AccountSold extends Notification implements ShouldQueue
             ->line("- Buyer: User #{$this->order->buyer_id}")
             ->line("The funds from this sale are currently held in escrow and will be released to your wallet after 12 hours if no dispute is filed by the buyer.")
             ->line("You can track the order status and view your earnings in your dashboard.")
-            ->action('View Order Details', url('/orders/' . $orderId))
-            ->action('View My Listings', url('/my-listings'))
+            ->action('View Order Details', SecurityHelper::frontendUrl('/orders/' . $orderId))
+            ->action('View My Listings', SecurityHelper::frontendUrl('/my-listings'))
             ->line("Thank you for using NXOLand!")
             ->line("If you have any questions, please don't hesitate to contact our support team.");
     }

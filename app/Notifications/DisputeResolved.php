@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Dispute;
+use App\Helpers\SecurityHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -87,7 +88,7 @@ class DisputeResolved extends Notification implements ShouldQueue
             ->when($this->dispute->resolution_notes, function ($mail) {
                 return $mail->line("Notes: {$this->dispute->resolution_notes}");
             })
-            ->action('View Dispute', url('/disputes/' . $this->dispute->id))
+            ->action('View Dispute', SecurityHelper::frontendUrl('/disputes/' . $this->dispute->id))
             ->line('Thank you for your patience during the dispute resolution process.');
     }
 }
