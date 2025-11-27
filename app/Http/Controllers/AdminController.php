@@ -146,7 +146,7 @@ class AdminController extends Controller
 
     public function listings(Request $request)
     {
-        $query = Listing::with('user')
+        $query = Listing::with(['user', 'orders.buyer', 'orders.payment'])
             ->withCount('orders');
 
         // Search functionality
@@ -514,8 +514,51 @@ class AdminController extends Controller
      */
     public function deleteListing(Request $request, $id)
     {
-        $listing = Listing::findOrFail($id);
+        // Accept delete_orders from query string or request body
+        $deleteOrders = $request->boolean('delete_orders', false);
+
+        $listing = Listing::with('orders')->findOrFail($id);
         $listingData = $listing->only(['id', 'title', 'user_id']);
+        $ordersCount = $listing->orders->count();
+        $deletedOrders = [];
+        
+        // If delete_orders is true, delete/cancel associated orders first
+        if ($deleteOrders) {
+            foreach ($listing->orders as $order) {
+                // Only cancel non-completed orders (completed orders should remain for records)
+                if ($order->status !== 'completed' && $order->status !== 'cancelled') {
+                    // Handle refund if order is in escrow
+                    if ($order->status === 'escrow_hold' && $order->payment) {
+                        DB::transaction(function () use ($order) {
+                            $buyerWallet = Wallet::lockForUpdate()
+                                ->firstOrCreate(
+                                    ['user_id' => $order->buyer_id],
+                                    ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                                );
+                            
+                            if ($buyerWallet->on_hold_balance >= $order->amount) {
+                                $buyerWallet->available_balance += $order->amount;
+                                $buyerWallet->on_hold_balance -= $order->amount;
+                                $buyerWallet->save();
+                            }
+                        });
+                    }
+                    
+                    // Cancel the order
+                    $order->status = 'cancelled';
+                    $order->cancellation_reason = 'Listing deleted by admin';
+                    $order->cancelled_by = 'admin';
+                    $order->cancelled_at = now();
+                    $order->save();
+                    
+                    $deletedOrders[] = $order->id;
+                } elseif ($order->status === 'payment_intent') {
+                    // Delete payment intents (not real orders yet)
+                    $deletedOrders[] = $order->id;
+                    $order->delete();
+                }
+            }
+        }
         
         $listing->delete();
 
@@ -525,11 +568,19 @@ class AdminController extends Controller
             Listing::class,
             $listingData['id'],
             $listingData,
-            null,
+            [
+                'delete_orders' => $deleteOrders,
+                'orders_count' => $ordersCount,
+                'deleted_orders' => $deletedOrders,
+            ],
             $request
         );
 
-        return response()->json(['message' => 'Listing deleted successfully']);
+        return response()->json([
+            'message' => 'Listing deleted successfully',
+            'orders_deleted' => count($deletedOrders),
+            'orders_remaining' => $ordersCount - count($deletedOrders),
+        ]);
     }
 
     /**
