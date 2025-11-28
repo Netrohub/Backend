@@ -93,58 +93,108 @@ class AuctionController extends Controller
             'method' => $request->method(),
         ]);
 
-        try {
-            $validated = $request->validate([
-            // Listing data (directly in auction_listings)
-            'title' => 'required|string|max:255',
-            'description' => 'required|string|max:5000',
-            'price' => 'required|numeric|min:10|max:10000',
-            'category' => ['required', 'string', Rule::in(['wos_accounts'])],
-            'images' => 'nullable|array|max:10',
-            'images.*' => 'nullable|url|max:2048',
-            'account_email' => 'required|email|max:255',
-            'account_password' => 'required|string|max:255',
-            'account_metadata' => 'nullable|array',
+        // Check if only listing_id is provided (backward compatibility with old frontend)
+        $hasListingId = $request->has('listing_id') && $request->filled('listing_id');
+        $hasDirectFields = $request->has('title') && $request->has('description') && $request->has('price');
+        
+        if ($hasListingId && !$hasDirectFields) {
+            // Old flow: fetch listing data from existing listing
+            $listing = Listing::findOrFail($request->input('listing_id'));
             
-            // Optional: can still link to existing listing if provided
-            'listing_id' => 'nullable|exists:listings,id',
-        ], [
-            'title.required' => 'Title is required',
-            'description.required' => 'Description is required',
-            'price.required' => 'Price is required',
-            'price.numeric' => 'Price must be a number',
-            'price.min' => 'Price must be at least $10',
-            'price.max' => 'Price must not exceed $10,000',
-            'category.required' => 'Category is required',
-            'category.in' => 'Only Whiteout Survival accounts can be listed for auction',
-            'account_email.required' => 'Account email is required',
-            'account_email.email' => 'Account email must be a valid email address',
-            'account_password.required' => 'Account password is required',
-        ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            Log::error('Auction validation failed', [
-                'errors' => $e->errors(),
-                'request_data' => $request->all(),
-            ]);
-            throw $e;
-        }
-
-        // Only WOS accounts allowed
-        if ($validated['category'] !== 'wos_accounts') {
-            return response()->json([
-                'message' => 'Only Whiteout Survival accounts can be listed for auction.',
-                'error_code' => 'INVALID_CATEGORY',
-            ], 400);
-        }
-
-        // If listing_id provided, verify ownership
-        if (isset($validated['listing_id'])) {
-            $listing = Listing::findOrFail($validated['listing_id']);
+            // Verify ownership
             if ($listing->user_id !== $user->id) {
                 return response()->json([
                     'message' => 'You can only create auctions for your own listings.',
                     'error_code' => 'UNAUTHORIZED',
                 ], 403);
+            }
+            
+            // Only WOS accounts allowed
+            if ($listing->category !== 'wos_accounts') {
+                return response()->json([
+                    'message' => 'Only Whiteout Survival accounts can be listed for auction.',
+                    'error_code' => 'INVALID_CATEGORY',
+                ], 400);
+            }
+            
+            // Use listing data to create auction
+            // Note: account_email and account_password might be null if not set
+            $accountEmail = $listing->account_email;
+            $accountPassword = $listing->account_password;
+            
+            if (!$accountEmail || !$accountPassword) {
+                return response()->json([
+                    'message' => 'The listing must have account credentials to create an auction.',
+                    'error_code' => 'MISSING_CREDENTIALS',
+                ], 400);
+            }
+            
+            $validated = [
+                'listing_id' => $listing->id,
+                'title' => $listing->title,
+                'description' => $listing->description,
+                'price' => $listing->price,
+                'category' => $listing->category,
+                'images' => $listing->images ?? [],
+                'account_email' => $accountEmail,
+                'account_password' => $accountPassword,
+                'account_metadata' => $listing->account_metadata ?? null,
+            ];
+        } else {
+            // New flow: validate direct fields
+            try {
+                $validated = $request->validate([
+                    // Listing data (directly in auction_listings)
+                    'title' => 'required|string|max:255',
+                    'description' => 'required|string|max:5000',
+                    'price' => 'required|numeric|min:10|max:10000',
+                    'category' => ['required', 'string', Rule::in(['wos_accounts'])],
+                    'images' => 'nullable|array|max:10',
+                    'images.*' => 'nullable|url|max:2048',
+                    'account_email' => 'required|email|max:255',
+                    'account_password' => 'required|string|max:255',
+                    'account_metadata' => 'nullable|array',
+                    
+                    // Optional: can still link to existing listing if provided
+                    'listing_id' => 'nullable|exists:listings,id',
+                ], [
+                    'title.required' => 'Title is required',
+                    'description.required' => 'Description is required',
+                    'price.required' => 'Price is required',
+                    'price.numeric' => 'Price must be a number',
+                    'price.min' => 'Price must be at least $10',
+                    'price.max' => 'Price must not exceed $10,000',
+                    'category.required' => 'Category is required',
+                    'category.in' => 'Only Whiteout Survival accounts can be listed for auction',
+                    'account_email.required' => 'Account email is required',
+                    'account_email.email' => 'Account email must be a valid email address',
+                    'account_password.required' => 'Account password is required',
+                ]);
+            } catch (\Illuminate\Validation\ValidationException $e) {
+                Log::error('Auction validation failed', [
+                    'errors' => $e->errors(),
+                    'request_data' => $request->all(),
+                ]);
+                throw $e;
+            }
+
+            // Only WOS accounts allowed
+            if ($validated['category'] !== 'wos_accounts') {
+                return response()->json([
+                    'message' => 'Only Whiteout Survival accounts can be listed for auction.',
+                    'error_code' => 'INVALID_CATEGORY',
+                ], 400);
+            }
+
+            // If listing_id provided, verify ownership
+            if (isset($validated['listing_id'])) {
+                $listing = Listing::findOrFail($validated['listing_id']);
+                if ($listing->user_id !== $user->id) {
+                    return response()->json([
+                        'message' => 'You can only create auctions for your own listings.',
+                        'error_code' => 'UNAUTHORIZED',
+                    ], 403);
+                }
             }
         }
 
