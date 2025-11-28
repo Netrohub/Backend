@@ -17,6 +17,7 @@ use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\ReviewController;
 use App\Http\Controllers\SuggestionController;
 use App\Http\Controllers\SiteSettingController;
+use App\Http\Controllers\AuctionController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -59,6 +60,11 @@ Route::prefix('v1')->group(function () {
     Route::get('/listings/categories', [ListingController::class, 'categories'])->middleware('throttle:60,1');
     Route::get('/listings', [ListingController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/listings/{id}', [ListingController::class, 'show'])->middleware('throttle:30,1');
+    
+    // Auction listings (public - anyone can browse)
+    Route::get('/auctions', [AuctionController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/auctions/{id}', [AuctionController::class, 'show'])->middleware('throttle:30,1');
+    Route::get('/auctions/{id}/bids', [AuctionController::class, 'getBids'])->middleware('throttle:60,1');
     
     // Public reviews
     Route::get('/reviews/seller/{sellerId}', [ReviewController::class, 'index']);
@@ -224,6 +230,16 @@ Route::prefix('v1')->group(function () {
             Route::delete('/images/{id}', [ImageController::class, 'destroy']);
             Route::get('/images/verify-config', [ImageController::class, 'verifyConfig']);
         });
+        
+        // Auction management (verified users can create, anyone verified can bid)
+        Route::middleware('throttle:30,1')->group(function () {
+            Route::post('/auctions', [AuctionController::class, 'store']);
+        });
+        
+        // Bidding (verified users only)
+        Route::middleware(['verified', 'throttle:60,1'])->group(function () {
+            Route::post('/auctions/{id}/bid', [AuctionController::class, 'placeBid']);
+        });
 
         // Payment callback (handled by frontend, but route exists for reference)
         // Frontend should handle: /orders/{id}/payment/callback
@@ -286,6 +302,11 @@ Route::prefix('v1')->group(function () {
                 Route::get('/withdrawals', [AdminController::class, 'withdrawals']);
                 Route::post('/withdrawals/{id}/approve', [AdminController::class, 'approveWithdrawal']);
                 Route::post('/withdrawals/{id}/reject', [AdminController::class, 'rejectWithdrawal']);
+                
+                // Auction management
+                Route::post('/auctions/{id}/approve', [AuctionController::class, 'approve']);
+                Route::post('/auctions/{id}/end', [AuctionController::class, 'endAuction']);
+                Route::post('/auctions/{id}/refund-deposits', [AuctionController::class, 'refundOutbidDeposits']);
             });
         });
     });

@@ -23,12 +23,14 @@ return [
         // Production domains
         'https://nxoland.com',
         'https://www.nxoland.com',
+        'https://bid.nxoland.com',
         // Development/staging (from environment variable)
         // Make sure to set FRONTEND_URL in production (.env file)
         env('FRONTEND_URL'),
         // Always allow localhost for development
         'http://localhost:5173',
         'http://localhost:3000',
+        'http://localhost:3001', // Bidding system dev server
     ]),
 
     'allowed_origins_patterns' => [],
