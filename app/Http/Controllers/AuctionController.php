@@ -84,21 +84,50 @@ class AuctionController extends Controller
             ], 403);
         }
 
-        $validated = $request->validate([
+        // Log received data for debugging
+        Log::info('Auction creation request', [
+            'user_id' => $user->id,
+            'request_data' => $request->all(),
+            'request_json' => $request->json()->all(),
+            'content_type' => $request->header('Content-Type'),
+            'method' => $request->method(),
+        ]);
+
+        try {
+            $validated = $request->validate([
             // Listing data (directly in auction_listings)
             'title' => 'required|string|max:255',
             'description' => 'required|string|max:5000',
             'price' => 'required|numeric|min:10|max:10000',
-            'category' => 'required|string|in:wos_accounts',
+            'category' => ['required', 'string', Rule::in(['wos_accounts'])],
             'images' => 'nullable|array|max:10',
-            'images.*' => 'url|max:2048',
+            'images.*' => 'nullable|url|max:2048',
             'account_email' => 'required|email|max:255',
             'account_password' => 'required|string|max:255',
             'account_metadata' => 'nullable|array',
             
             // Optional: can still link to existing listing if provided
             'listing_id' => 'nullable|exists:listings,id',
+        ], [
+            'title.required' => 'Title is required',
+            'description.required' => 'Description is required',
+            'price.required' => 'Price is required',
+            'price.numeric' => 'Price must be a number',
+            'price.min' => 'Price must be at least $10',
+            'price.max' => 'Price must not exceed $10,000',
+            'category.required' => 'Category is required',
+            'category.in' => 'Only Whiteout Survival accounts can be listed for auction',
+            'account_email.required' => 'Account email is required',
+            'account_email.email' => 'Account email must be a valid email address',
+            'account_password.required' => 'Account password is required',
         ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('Auction validation failed', [
+                'errors' => $e->errors(),
+                'request_data' => $request->all(),
+            ]);
+            throw $e;
+        }
 
         // Only WOS accounts allowed
         if ($validated['category'] !== 'wos_accounts') {
