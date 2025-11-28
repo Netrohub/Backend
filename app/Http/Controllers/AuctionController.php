@@ -21,7 +21,7 @@ class AuctionController extends Controller
      */
     public function index(Request $request)
     {
-        $query = AuctionListing::with(['listing', 'user', 'currentBidder'])
+        $query = AuctionListing::with(['user', 'currentBidder'])
             ->withCount('bids');
 
         // Filter by status
@@ -52,7 +52,6 @@ class AuctionController extends Controller
     public function show($id)
     {
         $auction = AuctionListing::with([
-            'listing',
             'user',
             'currentBidder',
             'bids' => function($query) {
@@ -64,10 +63,8 @@ class AuctionController extends Controller
             'winningBid.user:id,name,username,avatar'
         ])->findOrFail($id);
 
-        // Hide credentials from public
-        if ($auction->listing) {
-            $auction->listing->makeHidden(['account_email_encrypted', 'account_password_encrypted']);
-        }
+        // Hide credentials from public (already hidden via $hidden in model)
+        $auction->makeHidden(['account_email_encrypted', 'account_password_encrypted']);
 
         return response()->json($auction);
     }
@@ -88,45 +85,58 @@ class AuctionController extends Controller
         }
 
         $validated = $request->validate([
-            'listing_id' => 'required|exists:listings,id',
+            // Listing data (directly in auction_listings)
+            'title' => 'required|string|max:255',
+            'description' => 'required|string|max:5000',
+            'price' => 'required|numeric|min:10|max:10000',
+            'category' => 'required|string|in:wos_accounts',
+            'images' => 'nullable|array|max:10',
+            'images.*' => 'url|max:2048',
+            'account_email' => 'required|email|max:255',
+            'account_password' => 'required|string|max:255',
+            'account_metadata' => 'nullable|array',
+            
+            // Optional: can still link to existing listing if provided
+            'listing_id' => 'nullable|exists:listings,id',
         ]);
 
-        $listing = Listing::findOrFail($validated['listing_id']);
-
-        // Verify ownership
-        if ($listing->user_id !== $user->id) {
-            return response()->json([
-                'message' => 'You can only create auctions for your own listings.',
-                'error_code' => 'UNAUTHORIZED',
-            ], 403);
-        }
-
         // Only WOS accounts allowed
-        if ($listing->category !== 'wos_accounts') {
+        if ($validated['category'] !== 'wos_accounts') {
             return response()->json([
                 'message' => 'Only Whiteout Survival accounts can be listed for auction.',
                 'error_code' => 'INVALID_CATEGORY',
             ], 400);
         }
 
-        // Check if listing already has an auction
-        $existingAuction = AuctionListing::where('listing_id', $listing->id)
-            ->whereIn('status', ['pending_approval', 'approved', 'live'])
-            ->first();
-
-        if ($existingAuction) {
-            return response()->json([
-                'message' => 'This listing already has an active auction.',
-                'error_code' => 'AUCTION_EXISTS',
-            ], 400);
+        // If listing_id provided, verify ownership
+        if (isset($validated['listing_id'])) {
+            $listing = Listing::findOrFail($validated['listing_id']);
+            if ($listing->user_id !== $user->id) {
+                return response()->json([
+                    'message' => 'You can only create auctions for your own listings.',
+                    'error_code' => 'UNAUTHORIZED',
+                ], 403);
+            }
         }
 
-        // Create auction listing (pending approval)
-        $auction = AuctionListing::create([
-            'listing_id' => $listing->id,
+        // Create auction listing directly (pending approval)
+        $auction = new AuctionListing([
+            'listing_id' => $validated['listing_id'] ?? null,
             'user_id' => $user->id,
+            'title' => htmlspecialchars(strip_tags($validated['title']), ENT_QUOTES, 'UTF-8'),
+            'description' => htmlspecialchars(strip_tags($validated['description']), ENT_QUOTES, 'UTF-8'),
+            'price' => $validated['price'],
+            'category' => $validated['category'],
+            'images' => $validated['images'] ?? [],
+            'account_metadata' => $validated['account_metadata'] ?? null,
             'status' => 'pending_approval',
         ]);
+
+        // Set encrypted credentials
+        $auction->account_email = $validated['account_email'];
+        $auction->account_password = $validated['account_password'];
+        
+        $auction->save();
 
         AuditHelper::log(
             'auction.created',
@@ -135,14 +145,13 @@ class AuctionController extends Controller
             null,
             [
                 'auction_id' => $auction->id,
-                'listing_id' => $listing->id,
                 'user_id' => $user->id,
                 'status' => 'pending_approval',
             ],
             $request
         );
 
-        return response()->json($auction->load(['listing', 'user']), 201);
+        return response()->json($auction->load(['user']), 201);
     }
 
     /**
@@ -208,7 +217,7 @@ class AuctionController extends Controller
             $request
         );
 
-        return response()->json($auction->fresh(['listing', 'user', 'approvedBy']));
+        return response()->json($auction->fresh(['user', 'approvedBy']));
     }
 
     /**
@@ -231,7 +240,7 @@ class AuctionController extends Controller
             'deposit_amount' => 'required|numeric|min:0',
         ]);
 
-        $auction = AuctionListing::with('listing')->findOrFail($id);
+        $auction = AuctionListing::findOrFail($id);
 
         // Check if auction is live
         if (!$auction->isLive()) {
@@ -390,7 +399,7 @@ class AuctionController extends Controller
      */
     public function endAuction(Request $request, $id)
     {
-        $auction = AuctionListing::with(['listing', 'winningBid.user'])->findOrFail($id);
+        $auction = AuctionListing::with(['winningBid.user'])->findOrFail($id);
 
         if ($auction->status === 'ended') {
             return response()->json([
@@ -411,9 +420,9 @@ class AuctionController extends Controller
 
             // If there's a winning bid, create order
             if ($auction->winningBid) {
-                // Create order similar to regular listings
+                // Create order (listing_id can be null for auction-only orders)
                 $order = \App\Models\Order::create([
-                    'listing_id' => $auction->listing_id,
+                    'listing_id' => $auction->listing_id, // May be null for auction-only listings
                     'buyer_id' => $auction->current_bidder_id,
                     'seller_id' => $auction->user_id,
                     'amount' => $auction->current_bid,

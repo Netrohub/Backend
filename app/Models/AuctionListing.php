@@ -13,6 +13,12 @@ class AuctionListing extends Model
     protected $fillable = [
         'listing_id',
         'user_id',
+        'title',
+        'description',
+        'price',
+        'category',
+        'images',
+        'account_metadata',
         'status',
         'starting_bid',
         'current_bid',
@@ -26,9 +32,17 @@ class AuctionListing extends Model
         'is_maxed_account',
     ];
 
+    protected $hidden = [
+        'account_email_encrypted',
+        'account_password_encrypted',
+    ];
+
     protected function casts(): array
     {
         return [
+            'price' => 'decimal:2',
+            'images' => 'array',
+            'account_metadata' => 'array',
             'starting_bid' => 'decimal:2',
             'current_bid' => 'decimal:2',
             'bid_count' => 'integer',
@@ -37,6 +51,47 @@ class AuctionListing extends Model
             'ends_at' => 'datetime',
             'approved_at' => 'datetime',
         ];
+    }
+
+    // Encryption/Decryption for account credentials
+    public function setAccountEmailAttribute($value)
+    {
+        if ($value) {
+            $this->attributes['account_email_encrypted'] = encrypt($value);
+        }
+    }
+
+    public function getAccountEmailAttribute()
+    {
+        if (!isset($this->attributes['account_email_encrypted']) || empty($this->attributes['account_email_encrypted'])) {
+            return null;
+        }
+        try {
+            return decrypt($this->attributes['account_email_encrypted']);
+        } catch (\Exception $e) {
+            \Log::error('Failed to decrypt account email for auction listing: ' . $this->id);
+            return null;
+        }
+    }
+
+    public function setAccountPasswordAttribute($value)
+    {
+        if ($value) {
+            $this->attributes['account_password_encrypted'] = encrypt($value);
+        }
+    }
+
+    public function getAccountPasswordAttribute()
+    {
+        if (!isset($this->attributes['account_password_encrypted']) || empty($this->attributes['account_password_encrypted'])) {
+            return null;
+        }
+        try {
+            return decrypt($this->attributes['account_password_encrypted']);
+        } catch (\Exception $e) {
+            \Log::error('Failed to decrypt account password for auction listing: ' . $this->id);
+            return null;
+        }
     }
 
     // Relationships
