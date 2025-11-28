@@ -128,11 +128,19 @@ class AuctionController extends Controller
             'status' => 'pending_approval',
         ]);
 
-        AuditHelper::log('auction.created', [
-            'auction_id' => $auction->id,
-            'listing_id' => $listing->id,
-            'user_id' => $user->id,
-        ], $user);
+        AuditHelper::log(
+            'auction.created',
+            AuctionListing::class,
+            $auction->id,
+            null,
+            [
+                'auction_id' => $auction->id,
+                'listing_id' => $listing->id,
+                'user_id' => $user->id,
+                'status' => 'pending_approval',
+            ],
+            $request
+        );
 
         return response()->json($auction->load(['listing', 'user']), 201);
     }
@@ -184,11 +192,21 @@ class AuctionController extends Controller
             }
         });
 
-        AuditHelper::log('auction.approved', [
-            'auction_id' => $auction->id,
-            'starting_bid' => $validated['starting_bid'],
-            'admin_id' => $admin->id,
-        ], $admin);
+        AuditHelper::log(
+            'auction.approved',
+            AuctionListing::class,
+            $auction->id,
+            [
+                'status' => 'pending_approval',
+            ],
+            [
+                'auction_id' => $auction->id,
+                'status' => $auction->status,
+                'starting_bid' => $validated['starting_bid'],
+                'admin_id' => $admin->id,
+            ],
+            $request
+        );
 
         return response()->json($auction->fresh(['listing', 'user', 'approvedBy']));
     }
@@ -289,12 +307,19 @@ class AuctionController extends Controller
                 'bid_count' => $auction->bid_count + 1,
             ]);
 
-            AuditHelper::log('auction.bid_placed', [
-                'auction_id' => $auction->id,
-                'bid_id' => $bid->id,
-                'amount' => $validated['amount'],
-                'user_id' => $user->id,
-            ], $user);
+            AuditHelper::log(
+                'auction.bid_placed',
+                Bid::class,
+                $bid->id,
+                null,
+                [
+                    'auction_id' => $auction->id,
+                    'bid_id' => $bid->id,
+                    'amount' => $validated['amount'],
+                    'user_id' => $user->id,
+                ],
+                $request
+            );
 
             return response()->json([
                 'bid' => $bid->load('user:id,name,username,avatar'),
@@ -363,7 +388,7 @@ class AuctionController extends Controller
     /**
      * End auction and create order for winner
      */
-    public function endAuction($id)
+    public function endAuction(Request $request, $id)
     {
         $auction = AuctionListing::with(['listing', 'winningBid.user'])->findOrFail($id);
 
@@ -381,7 +406,7 @@ class AuctionController extends Controller
             ], 400);
         }
 
-        return DB::transaction(function () use ($auction) {
+        return DB::transaction(function () use ($auction, $request) {
             $auction->update(['status' => 'ended']);
 
             // If there's a winning bid, create order
@@ -399,11 +424,21 @@ class AuctionController extends Controller
                 $winningBid = $auction->winningBid;
                 $winningBid->update(['deposit_status' => 'applied']);
 
-                AuditHelper::log('auction.ended', [
-                    'auction_id' => $auction->id,
-                    'order_id' => $order->id,
-                    'winning_bid_id' => $winningBid->id,
-                ]);
+                AuditHelper::log(
+                    'auction.ended',
+                    AuctionListing::class,
+                    $auction->id,
+                    [
+                        'status' => 'live',
+                    ],
+                    [
+                        'auction_id' => $auction->id,
+                        'status' => 'ended',
+                        'order_id' => $order->id,
+                        'winning_bid_id' => $winningBid->id,
+                    ],
+                    $request
+                );
 
                 return response()->json([
                     'auction' => $auction->fresh(),
