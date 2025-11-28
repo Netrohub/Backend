@@ -29,7 +29,9 @@ class ListingEventEmitter
             'created_at' => $listing->created_at->toIso8601String(),
         ];
         
-        return DiscordEventEmitter::emit('listing.created', $data);
+        $result = DiscordEventEmitter::emit('listing.created', $data);
+        // Convert to bool: array/true = success, false = failure
+        return (bool) $result;
     }
 
     /**
@@ -48,7 +50,9 @@ class ListingEventEmitter
             'updated_at' => $listing->updated_at->toIso8601String(),
         ];
         
-        return DiscordEventEmitter::emit('listing.updated', $data);
+        $result = DiscordEventEmitter::emit('listing.updated', $data);
+        // Convert to bool: array/true = success, false = failure
+        return (bool) $result;
     }
 
     /**
@@ -68,7 +72,9 @@ class ListingEventEmitter
             'changed_at' => now()->toIso8601String(),
         ];
         
-        return DiscordEventEmitter::emit('listing.status_changed', $data);
+        $result = DiscordEventEmitter::emit('listing.status_changed', $data);
+        // Convert to bool: array/true = success, false = failure
+        return (bool) $result;
     }
 }
 
