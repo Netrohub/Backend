@@ -24,17 +24,26 @@ class AuctionController extends Controller
         $query = AuctionListing::with(['user', 'currentBidder'])
             ->withCount('bids');
 
+        $user = $request->user();
+        $isAdmin = $user && $user->isAdmin();
+
         // Filter by status
         if ($request->has('status')) {
             $status = $request->validate(['status' => Rule::in(['pending_approval', 'approved', 'live', 'ended', 'cancelled'])])['status'];
             $query->where('status', $status);
         } else {
-            // Default: show live and approved auctions
-            $query->whereIn('status', ['live', 'approved']);
+            // Default behavior
+            if ($isAdmin) {
+                // Admins see all statuses by default (no filter)
+                // This allows them to see pending_approval auctions
+            } else {
+                // Non-admins: show live and approved auctions only
+                $query->whereIn('status', ['live', 'approved']);
+            }
         }
 
-        // Only show approved/live auctions to non-admins
-        if (!$request->user() || !$request->user()->isAdmin()) {
+        // Additional security: non-admins can never see pending_approval or cancelled
+        if (!$isAdmin) {
             $query->whereIn('status', ['live', 'approved', 'ended']);
         }
 
