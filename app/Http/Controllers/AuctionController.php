@@ -27,10 +27,31 @@ class AuctionController extends Controller
         $user = $request->user();
         $isAdmin = $user && $user->isAdmin();
 
+        // Log for debugging
+        Log::info('Auction listing request', [
+            'user_id' => $user?->id,
+            'is_admin' => $isAdmin,
+            'status_filter' => $request->input('status'),
+            'has_status' => $request->has('status'),
+        ]);
+
         // Filter by status
         if ($request->has('status')) {
             $status = $request->validate(['status' => Rule::in(['pending_approval', 'approved', 'live', 'ended', 'cancelled'])])['status'];
             $query->where('status', $status);
+            
+            // Security: non-admins cannot see pending_approval or cancelled
+            if (!$isAdmin && in_array($status, ['pending_approval', 'cancelled'])) {
+                return response()->json([
+                    'data' => [],
+                    'meta' => [
+                        'current_page' => 1,
+                        'last_page' => 1,
+                        'per_page' => 15,
+                        'total' => 0,
+                    ],
+                ]);
+            }
         } else {
             // Default behavior
             if ($isAdmin) {
@@ -52,7 +73,15 @@ class AuctionController extends Controller
             ->orderBy('ends_at', 'asc')
             ->orderBy('created_at', 'desc');
 
-        return response()->json(PaginationHelper::paginate($query, $request));
+        $result = PaginationHelper::paginate($query, $request);
+        
+        Log::info('Auction listing response', [
+            'total' => $result['meta']['total'] ?? 0,
+            'count' => count($result['data'] ?? []),
+            'status_filter' => $request->input('status'),
+        ]);
+
+        return response()->json($result);
     }
 
     /**
