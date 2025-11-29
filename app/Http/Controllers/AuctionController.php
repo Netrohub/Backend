@@ -21,8 +21,25 @@ class AuctionController extends Controller
      */
     public function index(Request $request)
     {
-        $query = AuctionListing::with(['user', 'currentBidder'])
+        // Load relationships - use withTrashed for user in case user is soft-deleted
+        // But we still want to show the auction
+        $query = AuctionListing::with([
+            'user' => function($q) {
+                $q->withTrashed(); // Include soft-deleted users
+            },
+            'currentBidder' => function($q) {
+                $q->withTrashed(); // Include soft-deleted bidders
+            }
+        ])
             ->withCount('bids');
+        
+        // Debug: Check total count before filters
+        $totalBeforeFilters = AuctionListing::count();
+        $pendingCount = AuctionListing::where('status', 'pending_approval')->count();
+        Log::info('Auction counts before filters', [
+            'total' => $totalBeforeFilters,
+            'pending_approval' => $pendingCount,
+        ]);
 
         $user = $request->user();
         $isAdmin = $user && $user->isAdmin();
@@ -36,12 +53,25 @@ class AuctionController extends Controller
         ]);
 
         // Filter by status
-        if ($request->has('status') && $request->input('status') !== 'all') {
+        $statusParam = $request->input('status');
+        Log::info('Status parameter received', [
+            'status' => $statusParam,
+            'has_status' => $request->has('status'),
+            'is_admin' => $isAdmin,
+        ]);
+        
+        if ($request->has('status') && $statusParam !== 'all' && $statusParam !== null) {
             $status = $request->validate(['status' => Rule::in(['pending_approval', 'approved', 'live', 'ended', 'cancelled'])])['status'];
             $query->where('status', $status);
             
+            Log::info('Applied status filter', ['status' => $status]);
+            
             // Security: non-admins cannot see pending_approval or cancelled
             if (!$isAdmin && in_array($status, ['pending_approval', 'cancelled'])) {
+                Log::warning('Non-admin attempted to access restricted status', [
+                    'status' => $status,
+                    'user_id' => $user?->id,
+                ]);
                 return response()->json([
                     'data' => [],
                     'meta' => [
@@ -58,15 +88,17 @@ class AuctionController extends Controller
                 // Admins see all statuses when no filter or "all" is selected
                 // This allows them to see pending_approval auctions
                 // No additional filter needed
+                Log::info('Admin viewing all statuses (no filter)');
             } else {
                 // Non-admins: show live and approved auctions only
                 $query->whereIn('status', ['live', 'approved']);
+                Log::info('Non-admin default filter applied');
             }
         }
 
         // Additional security: non-admins can never see pending_approval or cancelled
         // (Only applies if no status filter was set, since we already filtered above)
-        if (!$isAdmin && (!$request->has('status') || $request->input('status') === 'all')) {
+        if (!$isAdmin && (!$request->has('status') || $statusParam === 'all' || $statusParam === null)) {
             $query->whereIn('status', ['live', 'approved', 'ended']);
         }
 
@@ -75,6 +107,14 @@ class AuctionController extends Controller
             ->orderBy('ends_at', 'asc')
             ->orderBy('created_at', 'desc');
 
+        // Debug: Count results before pagination
+        $countBeforePagination = $query->count();
+        Log::info('Auction count before pagination', [
+            'count' => $countBeforePagination,
+            'status_filter' => $statusParam,
+            'is_admin' => $isAdmin,
+        ]);
+        
         // Debug: Log the SQL query before pagination
         $sql = $query->toSql();
         $bindings = $query->getBindings();
@@ -83,12 +123,20 @@ class AuctionController extends Controller
             'bindings' => $bindings,
         ]);
         
-        // Debug: Count total auctions by status
+        // Debug: Count total auctions by status (raw query, no filters)
         $statusCounts = AuctionListing::selectRaw('status, COUNT(*) as count')
             ->groupBy('status')
             ->pluck('count', 'status')
             ->toArray();
-        Log::info('Total auctions by status', $statusCounts);
+        Log::info('Total auctions by status (raw)', $statusCounts);
+        
+        // Debug: Test the exact query
+        $testResults = $query->limit(5)->get();
+        Log::info('Test query results', [
+            'count' => $testResults->count(),
+            'ids' => $testResults->pluck('id')->toArray(),
+            'statuses' => $testResults->pluck('status')->toArray(),
+        ]);
         
         $result = PaginationHelper::paginate($query, $request);
         
