@@ -61,7 +61,8 @@ Route::prefix('v1')->group(function () {
     Route::get('/listings', [ListingController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/listings/{id}', [ListingController::class, 'show'])->middleware('throttle:30,1');
     
-    // Auction listings (public - anyone can browse)
+    // Auction listings (public - anyone can browse, but auth optional for admin features)
+    // Note: auth:sanctum is optional - we check in controller if user exists
     Route::get('/auctions', [AuctionController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/auctions/{id}', [AuctionController::class, 'show'])->middleware('throttle:30,1');
     Route::get('/auctions/{id}/bids', [AuctionController::class, 'getBids'])->middleware('throttle:60,1');

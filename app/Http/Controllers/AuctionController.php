@@ -11,8 +11,10 @@ use App\Helpers\AuditHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 use Carbon\Carbon;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuctionController extends Controller
 {
@@ -41,8 +43,43 @@ class AuctionController extends Controller
             'pending_approval' => $pendingCount,
         ]);
 
-        $user = $request->user();
+        // Try to authenticate user if token is provided (optional auth for admin features)
+        // Since route is public, we need to manually check for token
+        $user = null;
+        $token = $request->bearerToken();
+        $authHeader = $request->header('Authorization');
+        
+        Log::info('Authentication attempt', [
+            'has_bearer_token' => !empty($token),
+            'has_auth_header' => !empty($authHeader),
+            'auth_header_preview' => $authHeader ? substr($authHeader, 0, 20) . '...' : null,
+        ]);
+        
+        if ($token) {
+            // Try to find the personal access token
+            $personalAccessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+            
+            if ($personalAccessToken) {
+                $user = $personalAccessToken->tokenable;
+                Log::info('Token authenticated', [
+                    'user_id' => $user->id,
+                    'token_id' => $personalAccessToken->id,
+                ]);
+            } else {
+                Log::warning('Invalid token provided', [
+                    'token_preview' => substr($token, 0, 10) . '...',
+                ]);
+            }
+        }
+        
         $isAdmin = $user && $user->isAdmin();
+        
+        Log::info('User authentication check', [
+            'has_token' => !empty($token),
+            'user_id' => $user?->id,
+            'is_admin' => $isAdmin,
+            'user_role' => $user?->role,
+        ]);
 
         // Log for debugging
         Log::info('Auction listing request', [
