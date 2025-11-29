@@ -523,7 +523,7 @@ class AuctionController extends Controller
             ], 400);
         }
 
-        return DB::transaction(function () use ($auction, $user, $validated, $wallet) {
+        return DB::transaction(function () use ($auction, $user, $validated, $wallet, $request) {
             // Hold deposit in escrow
             $wallet->available_balance -= $validated['deposit_amount'];
             $wallet->on_hold_balance += $validated['deposit_amount'];
