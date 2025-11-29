@@ -75,13 +75,34 @@ class AuctionController extends Controller
 
         $result = PaginationHelper::paginate($query, $request);
         
+        // Convert paginator to array for proper JSON response
+        $responseData = [
+            'data' => $result->items(),
+            'meta' => [
+                'current_page' => $result->currentPage(),
+                'last_page' => $result->lastPage(),
+                'per_page' => $result->perPage(),
+                'total' => $result->total(),
+                'from' => $result->firstItem(),
+                'to' => $result->lastItem(),
+            ],
+            'links' => [
+                'first' => $result->url(1),
+                'last' => $result->url($result->lastPage()),
+                'prev' => $result->previousPageUrl(),
+                'next' => $result->nextPageUrl(),
+            ],
+        ];
+        
         Log::info('Auction listing response', [
-            'total' => $result['meta']['total'] ?? 0,
-            'count' => count($result['data'] ?? []),
+            'total' => $responseData['meta']['total'],
+            'count' => count($responseData['data']),
             'status_filter' => $request->input('status'),
+            'is_admin' => $isAdmin,
+            'user_id' => $user?->id,
         ]);
 
-        return response()->json($result);
+        return response()->json($responseData);
     }
 
     /**
