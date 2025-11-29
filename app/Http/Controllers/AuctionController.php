@@ -36,7 +36,7 @@ class AuctionController extends Controller
         ]);
 
         // Filter by status
-        if ($request->has('status')) {
+        if ($request->has('status') && $request->input('status') !== 'all') {
             $status = $request->validate(['status' => Rule::in(['pending_approval', 'approved', 'live', 'ended', 'cancelled'])])['status'];
             $query->where('status', $status);
             
@@ -53,10 +53,11 @@ class AuctionController extends Controller
                 ]);
             }
         } else {
-            // Default behavior
+            // No status filter or "all" - show based on user role
             if ($isAdmin) {
-                // Admins see all statuses by default (no filter)
+                // Admins see all statuses when no filter or "all" is selected
                 // This allows them to see pending_approval auctions
+                // No additional filter needed
             } else {
                 // Non-admins: show live and approved auctions only
                 $query->whereIn('status', ['live', 'approved']);
@@ -64,7 +65,8 @@ class AuctionController extends Controller
         }
 
         // Additional security: non-admins can never see pending_approval or cancelled
-        if (!$isAdmin) {
+        // (Only applies if no status filter was set, since we already filtered above)
+        if (!$isAdmin && (!$request->has('status') || $request->input('status') === 'all')) {
             $query->whereIn('status', ['live', 'approved', 'ended']);
         }
 
@@ -73,6 +75,21 @@ class AuctionController extends Controller
             ->orderBy('ends_at', 'asc')
             ->orderBy('created_at', 'desc');
 
+        // Debug: Log the SQL query before pagination
+        $sql = $query->toSql();
+        $bindings = $query->getBindings();
+        Log::info('Auction query SQL', [
+            'sql' => $sql,
+            'bindings' => $bindings,
+        ]);
+        
+        // Debug: Count total auctions by status
+        $statusCounts = AuctionListing::selectRaw('status, COUNT(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status')
+            ->toArray();
+        Log::info('Total auctions by status', $statusCounts);
+        
         $result = PaginationHelper::paginate($query, $request);
         
         // Convert paginator to array for proper JSON response
@@ -100,6 +117,7 @@ class AuctionController extends Controller
             'status_filter' => $request->input('status'),
             'is_admin' => $isAdmin,
             'user_id' => $user?->id,
+            'status_counts' => $statusCounts,
         ]);
 
         return response()->json($responseData);
