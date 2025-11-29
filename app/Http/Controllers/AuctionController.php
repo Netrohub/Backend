@@ -98,7 +98,7 @@ class AuctionController extends Controller
         ]);
         
         if ($request->has('status') && $statusParam !== 'all' && $statusParam !== null) {
-            $status = $request->validate(['status' => Rule::in(['pending_approval', 'approved', 'live', 'ended', 'cancelled'])])['status'];
+            $status = $request->validate(['status' => Rule::in(['pending_approval', 'approved', 'live', 'ended', 'cancelled', 'paused', 'rejected'])])['status'];
             $query->where('status', $status);
             
             Log::info('Applied status filter', ['status' => $status]);
@@ -700,6 +700,336 @@ class AuctionController extends Controller
             return response()->json([
                 'auction' => $auction->fresh(),
                 'message' => 'Auction ended with no bids.',
+            ]);
+        });
+    }
+
+    /**
+     * Admin: Update auction (edit)
+     */
+    public function update(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if (!$admin->isAdmin()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $auction = AuctionListing::findOrFail($id);
+
+        $validated = $request->validate([
+            'title' => 'sometimes|string|max:255',
+            'description' => 'sometimes|string|max:5000',
+            'starting_bid' => 'sometimes|numeric|min:0',
+            'current_bid' => 'sometimes|numeric|min:0',
+            'starts_at' => 'nullable|date',
+            'ends_at' => 'nullable|date|after:starts_at',
+            'admin_notes' => 'nullable|string|max:1000',
+            'is_maxed_account' => 'boolean',
+            'status' => 'sometimes|in:pending_approval,approved,live,ended,cancelled,paused,rejected',
+        ]);
+
+        $oldData = $auction->only([
+            'title', 'description', 'starting_bid', 'current_bid', 
+            'starts_at', 'ends_at', 'admin_notes', 'is_maxed_account', 'status'
+        ]);
+
+        DB::transaction(function () use ($auction, $validated) {
+            $updateData = [];
+            
+            if (isset($validated['title'])) {
+                $updateData['title'] = htmlspecialchars(strip_tags($validated['title']), ENT_QUOTES, 'UTF-8');
+            }
+            if (isset($validated['description'])) {
+                $updateData['description'] = htmlspecialchars(strip_tags($validated['description']), ENT_QUOTES, 'UTF-8');
+            }
+            if (isset($validated['starting_bid'])) {
+                $updateData['starting_bid'] = $validated['starting_bid'];
+            }
+            if (isset($validated['current_bid'])) {
+                $updateData['current_bid'] = $validated['current_bid'];
+            }
+            if (isset($validated['starts_at'])) {
+                $updateData['starts_at'] = $validated['starts_at'];
+            }
+            if (isset($validated['ends_at'])) {
+                $updateData['ends_at'] = $validated['ends_at'];
+            }
+            if (isset($validated['admin_notes'])) {
+                $updateData['admin_notes'] = $validated['admin_notes'];
+            }
+            if (isset($validated['is_maxed_account'])) {
+                $updateData['is_maxed_account'] = $validated['is_maxed_account'];
+            }
+            if (isset($validated['status'])) {
+                $updateData['status'] = $validated['status'];
+            }
+
+            $auction->update($updateData);
+        });
+
+        AuditHelper::log(
+            'auction.updated',
+            AuctionListing::class,
+            $auction->id,
+            $oldData,
+            $auction->only([
+                'title', 'description', 'starting_bid', 'current_bid',
+                'starts_at', 'ends_at', 'admin_notes', 'is_maxed_account', 'status'
+            ]),
+            $request
+        );
+
+        return response()->json([
+            'message' => 'Auction updated successfully',
+            'auction' => $auction->fresh(['user', 'approvedBy', 'currentBidder']),
+        ]);
+    }
+
+    /**
+     * Admin: Reject auction
+     */
+    public function reject(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if (!$admin->isAdmin()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $auction = AuctionListing::findOrFail($id);
+
+        if ($auction->status !== 'pending_approval') {
+            return response()->json([
+                'message' => 'Only pending approval auctions can be rejected.',
+                'error_code' => 'INVALID_STATUS',
+            ], 400);
+        }
+
+        $validated = $request->validate([
+            'rejection_reason' => 'nullable|string|max:1000',
+        ]);
+
+        $oldStatus = $auction->status;
+
+        DB::transaction(function () use ($auction, $validated, $admin) {
+            $auction->update([
+                'status' => 'rejected',
+                'admin_notes' => $validated['rejection_reason'] ?? null,
+            ]);
+        });
+
+        AuditHelper::log(
+            'auction.rejected',
+            AuctionListing::class,
+            $auction->id,
+            ['status' => $oldStatus],
+            [
+                'status' => 'rejected',
+                'admin_id' => $admin->id,
+                'rejection_reason' => $validated['rejection_reason'] ?? null,
+            ],
+            $request
+        );
+
+        return response()->json([
+            'message' => 'Auction rejected successfully',
+            'auction' => $auction->fresh(['user']),
+        ]);
+    }
+
+    /**
+     * Admin: Pause auction (temporary stop)
+     */
+    public function pause(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if (!$admin->isAdmin()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $auction = AuctionListing::findOrFail($id);
+
+        if (!in_array($auction->status, ['live', 'approved'])) {
+            return response()->json([
+                'message' => 'Only live or approved auctions can be paused.',
+                'error_code' => 'INVALID_STATUS',
+            ], 400);
+        }
+
+        $validated = $request->validate([
+            'pause_reason' => 'nullable|string|max:1000',
+        ]);
+
+        $oldStatus = $auction->status;
+        $previousNotes = $auction->admin_notes;
+
+        DB::transaction(function () use ($auction, $validated, $previousNotes) {
+            $pauseNote = $validated['pause_reason'] ? 
+                ($previousNotes ? $previousNotes . "\n\nPaused: " . $validated['pause_reason'] : "Paused: " . $validated['pause_reason']) :
+                ($previousNotes ? $previousNotes . "\n\nPaused by admin" : "Paused by admin");
+            
+            $auction->update([
+                'status' => 'paused',
+                'admin_notes' => $pauseNote,
+            ]);
+        });
+
+        AuditHelper::log(
+            'auction.paused',
+            AuctionListing::class,
+            $auction->id,
+            ['status' => $oldStatus],
+            [
+                'status' => 'paused',
+                'admin_id' => $admin->id,
+                'pause_reason' => $validated['pause_reason'] ?? null,
+            ],
+            $request
+        );
+
+        return response()->json([
+            'message' => 'Auction paused successfully',
+            'auction' => $auction->fresh(['user', 'currentBidder']),
+        ]);
+    }
+
+    /**
+     * Admin: Resume paused auction
+     */
+    public function resume(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if (!$admin->isAdmin()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $auction = AuctionListing::findOrFail($id);
+
+        if ($auction->status !== 'paused') {
+            return response()->json([
+                'message' => 'Only paused auctions can be resumed.',
+                'error_code' => 'INVALID_STATUS',
+            ], 400);
+        }
+
+        $oldStatus = $auction->status;
+        
+        // Determine what status to resume to
+        $resumeStatus = 'live';
+        if ($auction->ends_at && $auction->ends_at->isPast()) {
+            $resumeStatus = 'ended';
+        } elseif ($auction->starts_at && $auction->starts_at->isFuture()) {
+            $resumeStatus = 'approved';
+        }
+
+        DB::transaction(function () use ($auction, $resumeStatus) {
+            $previousNotes = $auction->admin_notes;
+            $resumeNote = $previousNotes ? $previousNotes . "\n\nResumed by admin" : "Resumed by admin";
+            
+            $auction->update([
+                'status' => $resumeStatus,
+                'admin_notes' => $resumeNote,
+            ]);
+        });
+
+        AuditHelper::log(
+            'auction.resumed',
+            AuctionListing::class,
+            $auction->id,
+            ['status' => $oldStatus],
+            [
+                'status' => $resumeStatus,
+                'admin_id' => $admin->id,
+            ],
+            $request
+        );
+
+        return response()->json([
+            'message' => 'Auction resumed successfully',
+            'auction' => $auction->fresh(['user', 'currentBidder']),
+        ]);
+    }
+
+    /**
+     * Admin: Stop/Cancel auction (permanent)
+     */
+    public function stop(Request $request, $id)
+    {
+        $admin = $request->user();
+
+        if (!$admin->isAdmin()) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $auction = AuctionListing::findOrFail($id);
+
+        if (in_array($auction->status, ['ended', 'cancelled', 'rejected'])) {
+            return response()->json([
+                'message' => 'Auction is already ended, cancelled, or rejected.',
+                'error_code' => 'INVALID_STATUS',
+            ], 400);
+        }
+
+        $validated = $request->validate([
+            'stop_reason' => 'nullable|string|max:1000',
+        ]);
+
+        $oldStatus = $auction->status;
+        $previousNotes = $auction->admin_notes;
+
+        return DB::transaction(function () use ($auction, $validated, $previousNotes, $oldStatus, $admin, $request) {
+            $stopNote = $validated['stop_reason'] ? 
+                ($previousNotes ? $previousNotes . "\n\nStopped: " . $validated['stop_reason'] : "Stopped: " . $validated['stop_reason']) :
+                ($previousNotes ? $previousNotes . "\n\nStopped by admin" : "Stopped by admin");
+            
+            $auction->update([
+                'status' => 'cancelled',
+                'admin_notes' => $stopNote,
+            ]);
+
+            // Refund all active bids if auction was live
+            if ($oldStatus === 'live' && $auction->current_bidder_id) {
+                $bids = Bid::where('auction_listing_id', $auction->id)
+                    ->where('deposit_status', 'held')
+                    ->with('user')
+                    ->get();
+
+                foreach ($bids as $bid) {
+                    $wallet = Wallet::lockForUpdate()
+                        ->firstOrCreate(
+                            ['user_id' => $bid->user_id],
+                            ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                        );
+
+                    $wallet->on_hold_balance -= $bid->deposit_amount;
+                    $wallet->available_balance += $bid->deposit_amount;
+                    $wallet->save();
+
+                    $bid->update([
+                        'deposit_status' => 'refunded',
+                    ]);
+                }
+            }
+
+            AuditHelper::log(
+                'auction.stopped',
+                AuctionListing::class,
+                $auction->id,
+                ['status' => $oldStatus],
+                [
+                    'status' => 'cancelled',
+                    'admin_id' => $admin->id,
+                    'stop_reason' => $validated['stop_reason'] ?? null,
+                ],
+                $request
+            );
+
+            return response()->json([
+                'message' => 'Auction stopped successfully',
+                'auction' => $auction->fresh(['user', 'currentBidder']),
             ]);
         });
     }

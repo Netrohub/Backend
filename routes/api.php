@@ -308,6 +308,11 @@ Route::prefix('v1')->group(function () {
                 Route::post('/auctions/{id}/approve', [AuctionController::class, 'approve']);
                 Route::post('/auctions/{id}/end', [AuctionController::class, 'endAuction']);
                 Route::post('/auctions/{id}/refund-deposits', [AuctionController::class, 'refundOutbidDeposits']);
+                Route::put('/auctions/{id}', [AuctionController::class, 'update']);
+                Route::post('/auctions/{id}/reject', [AuctionController::class, 'reject']);
+                Route::post('/auctions/{id}/pause', [AuctionController::class, 'pause']);
+                Route::post('/auctions/{id}/resume', [AuctionController::class, 'resume']);
+                Route::post('/auctions/{id}/stop', [AuctionController::class, 'stop']);
             });
         });
     });
