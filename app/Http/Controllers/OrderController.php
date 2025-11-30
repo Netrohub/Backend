@@ -58,13 +58,13 @@ class OrderController extends Controller
                 // Require Discord connection for buyer
                 $buyer = $request->user();
                 if (!$buyer->discord_user_id) {
-                    throw new \Exception('Buyer must connect Discord account to create orders.');
+                    throw new \Exception(MessageHelper::ORDER_BUYER_DISCORD_REQUIRED);
                 }
 
                 // Require Discord connection for seller
                 $seller = $listing->user;
                 if (!$seller->discord_user_id) {
-                    throw new \Exception('Seller must connect Discord account to receive orders.');
+                    throw new \Exception(MessageHelper::ORDER_SELLER_DISCORD_REQUIRED);
                 }
 
                 // Re-check status after lock (prevents race condition)
@@ -80,7 +80,7 @@ class OrderController extends Controller
                     ->first();
 
                 if ($existingRealOrder) {
-                    throw new \Exception('This listing already has an active order. Please try another listing.');
+                    throw new \Exception(MessageHelper::ORDER_ALREADY_EXISTS);
                 }
 
                 // Create payment intent (not a real order yet - only becomes order after payment confirmation)
@@ -97,11 +97,29 @@ class OrderController extends Controller
             return response()->json($order->load(['listing', 'buyer', 'seller']), 201);
         } catch (\Exception $e) {
             $errorCode = 'ORDER_CREATE_FAILED';
-            $userMessage = 'Failed to create order. Please try again.';
+            $userMessage = $e->getMessage();
+            $httpStatus = 400; // Default to 400 for validation errors
             
+            // Determine error code and HTTP status based on error message
             if (str_contains($e->getMessage(), 'SQLSTATE') || str_contains($e->getMessage(), 'database')) {
                 $errorCode = 'ORDER_DATABASE_ERROR';
                 $userMessage = 'Unable to create order due to a database error. Please try again later.';
+                $httpStatus = 500;
+            } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_BUYER_DISCORD_REQUIRED)) {
+                $errorCode = 'ORDER_BUYER_DISCORD_REQUIRED';
+                $httpStatus = 400;
+            } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_SELLER_DISCORD_REQUIRED)) {
+                $errorCode = 'ORDER_SELLER_DISCORD_REQUIRED';
+                $httpStatus = 400;
+            } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_CANNOT_BUY_OWN)) {
+                $errorCode = 'ORDER_CANNOT_BUY_OWN';
+                $httpStatus = 400;
+            } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_NOT_AVAILABLE)) {
+                $errorCode = 'ORDER_NOT_AVAILABLE';
+                $httpStatus = 400;
+            } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_ALREADY_EXISTS)) {
+                $errorCode = 'ORDER_ALREADY_EXISTS';
+                $httpStatus = 400;
             }
 
             \Illuminate\Support\Facades\Log::error('Order creation failed', [
@@ -109,6 +127,7 @@ class OrderController extends Controller
                 'buyer_id' => $request->user()->id ?? null,
                 'error' => $e->getMessage(),
                 'error_code' => $errorCode,
+                'http_status' => $httpStatus,
                 'trace' => config('app.debug') ? $e->getTraceAsString() : null,
             ]);
 
@@ -116,7 +135,7 @@ class OrderController extends Controller
                 'message' => $userMessage,
                 'error_code' => $errorCode,
                 'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
-            ], 500);
+            ], $httpStatus);
         }
     }
 

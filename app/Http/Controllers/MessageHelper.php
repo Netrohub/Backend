@@ -26,6 +26,9 @@ class MessageHelper
     public const ORDER_NOT_AVAILABLE = 'Listing is not available.';
     public const ORDER_NOT_PENDING = 'Order is not in pending status.';
     public const ORDER_INSUFFICIENT_ESCROW = 'Insufficient escrow balance.';
+    public const ORDER_BUYER_DISCORD_REQUIRED = 'You must connect your Discord account to create orders.';
+    public const ORDER_SELLER_DISCORD_REQUIRED = 'The seller must connect their Discord account to receive orders.';
+    public const ORDER_ALREADY_EXISTS = 'This listing already has an active order. Please try another listing.';
     
     // Payment messages
     public const PAYMENT_CREATE_FAILED = 'Failed to create payment.';
