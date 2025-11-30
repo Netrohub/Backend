@@ -105,8 +105,8 @@ class OrderController extends Controller
             }
 
             \Illuminate\Support\Facades\Log::error('Order creation failed', [
-                'listing_id' => $listing->id,
-                'buyer_id' => $request->user()->id,
+                'listing_id' => $validated['listing_id'] ?? null,
+                'buyer_id' => $request->user()->id ?? null,
                 'error' => $e->getMessage(),
                 'error_code' => $errorCode,
                 'trace' => config('app.debug') ? $e->getTraceAsString() : null,
