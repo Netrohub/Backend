@@ -11,6 +11,7 @@ use App\Services\HyperPayService;
 use App\Notifications\PaymentConfirmed;
 use App\Notifications\OrderStatusChanged;
 use App\Helpers\AuditHelper;
+use App\Helpers\MadaHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -653,8 +654,34 @@ class PaymentController extends Controller
             $resultCode = $statusResponse['result']['code'] ?? null;
             $resultDescription = $statusResponse['result']['description'] ?? 'Unknown status';
             
+            // MADA BIN detection: Check if failed payment used a MADA card in credit card flow
+            $cardBin = $statusResponse['card']['bin'] ?? null;
+            $isMadaCard = MadaHelper::isMadaCard($cardBin);
+            $isCreditCardFlow = !empty($statusResponse['paymentType']) && $statusResponse['paymentType'] !== 'DB'; // DB = Debit (MADA)
+            
             $isSuccessful = $resultCode && $this->hyperPayService->isPaymentSuccessful($resultCode);
             $isPending = $resultCode && $this->hyperPayService->isPaymentPending($resultCode);
+            
+            // If payment failed and MADA card was used in credit card flow, show MADA error
+            if (!$isSuccessful && $isMadaCard && $isCreditCardFlow) {
+                $locale = $request->header('Accept-Language', 'en');
+                $locale = str_starts_with($locale, 'ar') ? 'ar' : 'en';
+                $madaError = MadaHelper::getMadaErrorMessage($locale);
+                
+                Log::warning('MADA card used in credit card flow', [
+                    'order_id' => $order->id,
+                    'card_bin' => $cardBin,
+                    'payment_type' => $statusResponse['paymentType'] ?? null,
+                ]);
+                
+                return response()->json([
+                    'status' => 'failed',
+                    'resultCode' => $resultCode,
+                    'resultDescription' => $madaError,
+                    'isMadaCard' => true,
+                    'response' => $statusResponse,
+                ]);
+            }
 
             // Update payment record if successful
             if ($isSuccessful) {
@@ -714,6 +741,7 @@ class PaymentController extends Controller
                 'status' => $isSuccessful ? 'success' : ($isPending ? 'pending' : 'failed'),
                 'resultCode' => $resultCode,
                 'resultDescription' => $resultDescription,
+                'isMadaCard' => $isMadaCard,
                 'response' => $statusResponse,
             ]);
         } catch (\Exception $e) {

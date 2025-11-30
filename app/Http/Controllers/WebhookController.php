@@ -12,6 +12,7 @@ use App\Services\PaylinkClient;
 use App\Services\HyperPayService;
 use App\Services\PersonaService;
 use App\Services\PersonaKycHandler;
+use App\Helpers\MadaHelper;
 use App\Notifications\PaymentConfirmed;
 use App\Notifications\OrderStatusChanged;
 use Illuminate\Http\Request;
@@ -527,6 +528,8 @@ class WebhookController extends Controller
             $paymentType = $payload['paymentType'] ?? null;
             $amount = $payload['amount'] ?? null;
             $currency = $payload['currency'] ?? null;
+            $cardBin = $payload['card']['bin'] ?? null;
+            $isMadaCard = MadaHelper::isMadaCard($cardBin);
 
             Log::info('HyperPay Webhook: Processing payment', [
                 'payment_id' => $payment->id,
@@ -534,6 +537,8 @@ class WebhookController extends Controller
                 'checkout_id' => $checkoutId,
                 'result_code' => $resultCode,
                 'payment_type' => $paymentType,
+                'card_bin' => $cardBin,
+                'is_mada_card' => $isMadaCard,
             ]);
 
             // Update payment record with webhook payload
