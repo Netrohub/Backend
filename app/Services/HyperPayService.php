@@ -15,10 +15,29 @@ class HyperPayService
 
     public function __construct()
     {
-        $this->baseUrl = config('services.hyperpay.base_url');
-        $this->entityId = config('services.hyperpay.entity_id');
-        $this->accessToken = config('services.hyperpay.access_token');
-        $this->environment = config('services.hyperpay.environment', 'test');
+        $baseUrl = config('services.hyperpay.base_url') ?? 'https://eu-test.oppwa.com';
+        $entityId = config('services.hyperpay.entity_id') ?? '';
+        $accessToken = config('services.hyperpay.access_token') ?? '';
+        $environment = config('services.hyperpay.environment') ?? 'test';
+        
+        // Validate required configuration before assignment
+        if (empty($entityId)) {
+            throw new \RuntimeException('HyperPay entity_id is not configured. Please set HYPERPAY_ENTITY_ID in your .env file.');
+        }
+        
+        if (empty($accessToken)) {
+            throw new \RuntimeException('HyperPay access_token is not configured. Please set HYPERPAY_ACCESS_TOKEN in your .env file.');
+        }
+        
+        if (empty($baseUrl)) {
+            throw new \RuntimeException('HyperPay base_url is not configured. Please set HYPERPAY_BASE_URL in your .env file.');
+        }
+        
+        // Assign after validation (ensures non-null values)
+        $this->baseUrl = $baseUrl;
+        $this->entityId = $entityId;
+        $this->accessToken = $accessToken;
+        $this->environment = $environment;
     }
 
     /**
