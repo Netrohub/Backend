@@ -20,3 +20,7 @@ Route::post('/webhooks/persona', [WebhookController::class, 'persona'])
 // Paylink payment callback (public route - no auth required)
 Route::get('/payments/paylink/callback', [PaymentController::class, 'callback'])
     ->name('payments.paylink.callback');
+
+// HyperPay payment callback (public route - no auth required)
+Route::get('/payments/hyperpay/callback', [PaymentController::class, 'hyperPayCallback'])
+    ->name('payments.hyperpay.callback');

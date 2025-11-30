@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Wallet;
 use App\Services\PaylinkClient;
+use App\Services\HyperPayService;
 use App\Notifications\PaymentConfirmed;
 use App\Notifications\OrderStatusChanged;
 use App\Helpers\AuditHelper;
@@ -22,7 +23,8 @@ class PaymentController extends Controller
     const USD_TO_SAR_RATE = 3.75;
 
     public function __construct(
-        private PaylinkClient $paylinkClient
+        private PaylinkClient $paylinkClient,
+        private HyperPayService $hyperPayService
     ) {}
 
     public function create(Request $request)
@@ -485,5 +487,308 @@ class PaymentController extends Controller
             ]);
             return redirect(config('app.frontend_url') . '/order/' . $orderId . '?error=callback_error');
         }
+    }
+
+    /**
+     * Prepare HyperPay checkout for COPYandPAY widget
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function prepareHyperPayCheckout(Request $request)
+    {
+        $validated = $request->validate([
+            'order_id' => 'required|exists:orders,id',
+        ]);
+
+        $order = Order::with('listing')->findOrFail($validated['order_id']);
+
+        if ($order->buyer_id !== $request->user()->id) {
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+        }
+
+        // Only allow payment for payment_intent status
+        if ($order->status !== 'payment_intent') {
+            return response()->json([
+                'message' => 'لا يمكن الدفع لهذا الطلب. الطلب غير صالح أو تم الدفع مسبقاً.',
+                'error_code' => 'ORDER_NOT_PAYMENT_INTENT',
+            ], 400);
+        }
+
+        // SECURITY: Validate order amount matches current listing price
+        if ($order->listing && abs($order->amount - $order->listing->price) > 0.01) {
+            return response()->json([
+                'message' => 'Order amount does not match listing price. Please create a new order.',
+                'error_code' => 'ORDER_AMOUNT_MISMATCH',
+            ], 400);
+        }
+
+        // SECURITY: Check for existing payment to prevent duplicate payment attempts
+        $existingPayment = Payment::where('order_id', $order->id)
+            ->whereIn('status', ['initiated', 'authorized', 'captured'])
+            ->whereNotNull('hyperpay_checkout_id')
+            ->first();
+
+        if ($existingPayment && $existingPayment->hyperpay_checkout_id) {
+            // Return existing checkout info
+            $widgetScript = $this->hyperPayService->getWidgetScriptUrl($existingPayment->hyperpay_checkout_id);
+            return response()->json([
+                'message' => 'Payment already initiated for this order. You can continue with the existing payment.',
+                'payment' => $existingPayment,
+                'checkoutId' => $existingPayment->hyperpay_checkout_id,
+                'widgetScriptUrl' => $widgetScript['url'],
+                'error_code' => 'PAYMENT_ALREADY_EXISTS',
+            ], 200);
+        }
+
+        // Prepare checkout data
+        $shopperResultUrl = config('app.frontend_url') . '/payments/hyperpay/callback?order_id=' . $order->id;
+        
+        $checkoutData = [
+            'entityId' => config('services.hyperpay.entity_id'),
+            'amount' => number_format($order->amount, 2, '.', ''),
+            'currency' => 'USD',
+            'paymentType' => 'DB', // Debit (immediate payment)
+            'merchantTransactionId' => 'NXO-' . $order->id,
+            'shopperResultUrl' => $shopperResultUrl,
+            'billing.street1' => '',
+            'billing.city' => '',
+            'billing.state' => '',
+            'billing.postcode' => '',
+            'billing.country' => 'US',
+            'customer.email' => $request->user()->email,
+            'customer.givenName' => $request->user()->name ?? '',
+            'customer.surname' => '',
+        ];
+
+        try {
+            $result = DB::transaction(function () use ($order, $checkoutData, $request) {
+                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData);
+
+                if (!isset($checkoutResponse['id'])) {
+                    $errorMessage = $checkoutResponse['result']['description'] 
+                        ?? $checkoutResponse['message'] 
+                        ?? MessageHelper::PAYMENT_CREATE_FAILED;
+                    throw new \Exception($errorMessage);
+                }
+
+                // Create payment record
+                $payment = Payment::create([
+                    'order_id' => $order->id,
+                    'user_id' => $order->buyer_id,
+                    'hyperpay_checkout_id' => $checkoutResponse['id'],
+                    'status' => 'initiated',
+                    'amount' => $order->amount,
+                    'currency' => 'USD',
+                    'hyperpay_response' => $checkoutResponse,
+                ]);
+
+                return ['payment' => $payment, 'checkoutResponse' => $checkoutResponse];
+            });
+
+            $payment = $result['payment'];
+            $checkoutResponse = $result['checkoutResponse'];
+            $widgetScript = $this->hyperPayService->getWidgetScriptUrl($checkoutResponse['id']);
+
+            Log::info('HyperPay checkout prepared', [
+                'order_id' => $order->id,
+                'checkout_id' => $checkoutResponse['id'],
+            ]);
+
+            return response()->json([
+                'payment' => $payment,
+                'checkoutId' => $checkoutResponse['id'],
+                'widgetScriptUrl' => $widgetScript['url'],
+                'integrity' => $widgetScript['integrity'],
+            ]);
+        } catch (\Exception $e) {
+            $errorCode = 'PAYMENT_CREATE_FAILED';
+            $userMessage = MessageHelper::PAYMENT_CREATE_FAILED;
+            
+            if (str_contains($e->getMessage(), 'network') || str_contains($e->getMessage(), 'timeout')) {
+                $errorCode = 'PAYMENT_NETWORK_ERROR';
+                $userMessage = 'Unable to connect to payment gateway. Please try again.';
+            } elseif (str_contains($e->getMessage(), 'invalid') || str_contains($e->getMessage(), 'validation')) {
+                $errorCode = 'PAYMENT_INVALID_DATA';
+                $userMessage = 'Invalid payment data provided. Please check your information.';
+            }
+
+            Log::error('HyperPay checkout preparation failed', [
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            ]);
+
+            return response()->json([
+                'message' => $userMessage,
+                'error_code' => $errorCode,
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get HyperPay payment status
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getHyperPayStatus(Request $request)
+    {
+        $validated = $request->validate([
+            'resourcePath' => 'required|string',
+            'order_id' => 'required|exists:orders,id',
+        ]);
+
+        $order = Order::findOrFail($validated['order_id']);
+
+        // SECURITY: Only order buyer can check payment status
+        if ($order->buyer_id !== $request->user()->id) {
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+        }
+
+        try {
+            $statusResponse = $this->hyperPayService->getPaymentStatus($validated['resourcePath']);
+            
+            $resultCode = $statusResponse['result']['code'] ?? null;
+            $resultDescription = $statusResponse['result']['description'] ?? 'Unknown status';
+            
+            $isSuccessful = $resultCode && $this->hyperPayService->isPaymentSuccessful($resultCode);
+            $isPending = $resultCode && $this->hyperPayService->isPaymentPending($resultCode);
+
+            // Update payment record if successful
+            if ($isSuccessful) {
+                $payment = Payment::where('order_id', $order->id)
+                    ->whereNotNull('hyperpay_checkout_id')
+                    ->first();
+                
+                if ($payment && $payment->status !== 'captured') {
+                    DB::transaction(function () use ($payment, $statusResponse, $order) {
+                        $payment->status = 'captured';
+                        $payment->captured_at = now();
+                        $payment->hyperpay_response = array_merge($payment->hyperpay_response ?? [], $statusResponse);
+                        $payment->save();
+
+                        // Update order status if still in payment_intent
+                        if ($order->status === 'payment_intent') {
+                            $buyerWallet = Wallet::lockForUpdate()
+                                ->firstOrCreate(
+                                    ['user_id' => $order->buyer_id],
+                                    ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                                );
+                            
+                            $buyerWallet->on_hold_balance += $order->amount;
+                            $buyerWallet->save();
+
+                            $oldStatus = $order->status;
+                            $order->status = 'escrow_hold';
+                            $order->paid_at = now();
+                            $order->escrow_hold_at = now();
+                            $order->escrow_release_at = now()->addHours(12);
+                            $order->save();
+
+                            // Mark listing as sold
+                            $listing = $order->listing;
+                            if ($listing && $listing->status === 'active') {
+                                $listing->status = 'sold';
+                                $listing->save();
+                            }
+
+                            // Send notifications
+                            $order->buyer->notify(new PaymentConfirmed($order));
+                            if ($listing) {
+                                $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                            }
+                            $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                            $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+
+                            // Schedule escrow release
+                            ReleaseEscrowFunds::dispatch($order->id)
+                                ->delay(now()->addHours(12));
+                        }
+                    });
+                }
+            }
+
+            return response()->json([
+                'status' => $isSuccessful ? 'success' : ($isPending ? 'pending' : 'failed'),
+                'resultCode' => $resultCode,
+                'resultDescription' => $resultDescription,
+                'response' => $statusResponse,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('HyperPay get status failed', [
+                'order_id' => $order->id,
+                'resource_path' => $validated['resourcePath'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to get payment status',
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle HyperPay payment callback
+     * This is called when user returns from HyperPay payment page
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function hyperPayCallback(Request $request)
+    {
+        $orderId = $request->query('order_id');
+        $resourcePath = $request->query('resourcePath');
+
+        if (!$orderId) {
+            Log::warning('HyperPay callback: Missing order_id', ['query' => $request->query()]);
+            return redirect(config('app.frontend_url') . '/orders?error=invalid_callback');
+        }
+
+        $order = Order::withTrashed()->find($orderId);
+        if (!$order) {
+            Log::warning('HyperPay callback: Order not found', ['order_id' => $orderId]);
+            return redirect(config('app.frontend_url') . '/orders?error=order_not_found');
+        }
+
+        if ($order->trashed()) {
+            Log::warning('HyperPay callback: Order is soft-deleted', ['order_id' => $orderId]);
+            return redirect(config('app.frontend_url') . '/orders?error=order_deleted');
+        }
+
+        // If resourcePath is provided, get payment status
+        if ($resourcePath) {
+            try {
+                $statusResponse = $this->hyperPayService->getPaymentStatus($resourcePath);
+                $resultCode = $statusResponse['result']['code'] ?? null;
+                
+                if ($resultCode && $this->hyperPayService->isPaymentSuccessful($resultCode)) {
+                    // Payment successful - redirect to success page
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                } elseif ($resultCode && $this->hyperPayService->isPaymentPending($resultCode)) {
+                    // Payment pending
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=pending');
+                } else {
+                    // Payment failed
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
+                }
+            } catch (\Exception $e) {
+                Log::error('HyperPay callback: Failed to get payment status', [
+                    'order_id' => $orderId,
+                    'resource_path' => $resourcePath,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Check order status - if already paid, redirect to success
+        if ($order->status === 'escrow_hold' || $order->status === 'completed') {
+            return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+        }
+
+        // Redirect to order page - user can check status
+        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
     }
 }

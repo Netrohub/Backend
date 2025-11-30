@@ -15,11 +15,13 @@ class Payment extends Model
         'tap_charge_id',
         'tap_reference',
         'paylink_transaction_no',
+        'hyperpay_checkout_id',
         'status',
         'amount',
         'currency',
         'tap_response',
         'paylink_response',
+        'hyperpay_response',
         'webhook_payload',
         'captured_at',
     ];
@@ -30,6 +32,7 @@ class Payment extends Model
             'amount' => 'decimal:2',
             'tap_response' => 'array',
             'paylink_response' => 'array',
+            'hyperpay_response' => 'array',
             'webhook_payload' => 'array',
             'captured_at' => 'datetime',
         ];

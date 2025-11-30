@@ -93,4 +93,12 @@ return [
         'secret' => env('PAYLINK_API_SECRET'),
     ],
 
+    'hyperpay' => [
+        'base_url' => env('HYPERPAY_BASE_URL', 'https://eu-test.oppwa.com'),
+        'entity_id' => env('HYPERPAY_ENTITY_ID'),
+        'access_token' => env('HYPERPAY_ACCESS_TOKEN'),
+        'environment' => env('HYPERPAY_ENVIRONMENT', 'test'), // 'test' or 'live'
+        'webhook_secret' => env('HYPERPAY_WEBHOOK_SECRET'),
+    ],
+
 ];

@@ -80,6 +80,7 @@ Route::prefix('v1')->group(function () {
     Route::middleware('throttle:60,1')->group(function () {
         Route::post('/webhook/persona', [WebhookController::class, 'persona']);
         Route::post('/webhook/paylink', [WebhookController::class, 'paylink']);
+        Route::post('/webhook/hyperpay', [WebhookController::class, 'hyperpay']);
         // Tap transfer webhook (still used for withdrawals)
         Route::post('/webhook/tap/transfer', [WebhookController::class, 'tapTransfer']);
     });
@@ -143,6 +144,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle.user:60,60');
             Route::post('/payments/create', [PaymentController::class, 'create'])->middleware('throttle.user:60,60');
             Route::post('/checkout', [PaymentController::class, 'create'])->middleware('throttle.user:60,60'); // Alias for compatibility
+            // HyperPay payment routes
+            Route::post('/payments/hyperpay/prepare', [PaymentController::class, 'prepareHyperPayCheckout'])->middleware('throttle.user:60,60');
+            Route::post('/payments/hyperpay/status', [PaymentController::class, 'getHyperPayStatus'])->middleware('throttle.user:60,60');
         });
         
         Route::get('/orders', [OrderController::class, 'index'])->middleware('throttle:120,1'); // Increased to 120/min

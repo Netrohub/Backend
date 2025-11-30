@@ -9,6 +9,7 @@ use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
 use App\Services\TapPaymentService;
 use App\Services\PaylinkClient;
+use App\Services\HyperPayService;
 use App\Services\PersonaService;
 use App\Services\PersonaKycHandler;
 use App\Notifications\PaymentConfirmed;
@@ -23,6 +24,7 @@ class WebhookController extends Controller
     public function __construct(
         private TapPaymentService $tapService,
         private PaylinkClient $paylinkClient,
+        private HyperPayService $hyperPayService,
         private PersonaService $personaService,
         private PersonaKycHandler $kycHandler
     ) {}
@@ -444,6 +446,208 @@ class WebhookController extends Controller
             Log::error('Paylink Webhook Error', [
                 'transaction_no' => $transactionNo,
                 'order_id' => $order->id ?? null,
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            ]);
+
+            return response()->json(['message' => 'Webhook processing error'], 500);
+        }
+    }
+
+    /**
+     * Handle HyperPay webhook notifications
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function hyperpay(Request $request)
+    {
+        $payload = $request->all();
+        
+        Log::info('HyperPay Webhook Received', ['payload' => $payload]);
+
+        // Verify webhook signature if configured
+        if (config('services.hyperpay.webhook_secret')) {
+            $signature = $request->header('X-HyperPay-Signature') 
+                ?? $request->header('X-Signature')
+                ?? null;
+            
+            if ($signature && !$this->hyperPayService->verifyWebhookSignature($payload, $signature)) {
+                Log::warning('HyperPay Webhook Signature Invalid');
+                return response()->json(['message' => MessageHelper::WEBHOOK_INVALID_SIGNATURE], 401);
+            }
+        }
+
+        try {
+            // Extract checkout ID and payment information from webhook
+            $checkoutId = $payload['id'] ?? $payload['checkoutId'] ?? null;
+            $merchantTransactionId = $payload['merchantTransactionId'] ?? $payload['merchantTransactionId'] ?? null;
+            
+            if (!$checkoutId && !$merchantTransactionId) {
+                Log::warning('HyperPay Webhook: Missing checkout ID or transaction ID', ['payload' => $payload]);
+                return response()->json(['message' => 'Missing required fields'], 400);
+            }
+
+            // Extract order ID from merchant transaction ID (format: NXO-{order_id})
+            $orderId = null;
+            if ($merchantTransactionId && preg_match('/^NXO-(\d+)$/', $merchantTransactionId, $matches)) {
+                $orderId = (int) $matches[1];
+            }
+
+            // Find payment by checkout ID or order ID
+            $payment = null;
+            if ($checkoutId) {
+                $payment = Payment::where('hyperpay_checkout_id', $checkoutId)->first();
+            }
+            
+            if (!$payment && $orderId) {
+                $payment = Payment::where('order_id', $orderId)
+                    ->whereNotNull('hyperpay_checkout_id')
+                    ->first();
+            }
+
+            if (!$payment) {
+                Log::warning('HyperPay Webhook: Payment not found', [
+                    'checkout_id' => $checkoutId,
+                    'order_id' => $orderId,
+                    'merchant_transaction_id' => $merchantTransactionId,
+                ]);
+                return response()->json(['message' => MessageHelper::WEBHOOK_PAYMENT_NOT_FOUND], 404);
+            }
+
+            $order = $payment->order;
+            if (!$order) {
+                Log::warning('HyperPay Webhook: Order not found', ['payment_id' => $payment->id]);
+                return response()->json(['message' => MessageHelper::WEBHOOK_ORDER_NOT_FOUND], 404);
+            }
+
+            // Get payment status from webhook payload
+            $resultCode = $payload['result']['code'] ?? null;
+            $resultDescription = $payload['result']['description'] ?? 'Unknown status';
+            $paymentType = $payload['paymentType'] ?? null;
+            $amount = $payload['amount'] ?? null;
+            $currency = $payload['currency'] ?? null;
+
+            Log::info('HyperPay Webhook: Processing payment', [
+                'payment_id' => $payment->id,
+                'order_id' => $order->id,
+                'checkout_id' => $checkoutId,
+                'result_code' => $resultCode,
+                'payment_type' => $paymentType,
+            ]);
+
+            // Update payment record with webhook payload
+            $payment->webhook_payload = $payload;
+            $payment->hyperpay_response = array_merge($payment->hyperpay_response ?? [], $payload);
+
+            // Process payment based on result code
+            if ($resultCode && $this->hyperPayService->isPaymentSuccessful($resultCode)) {
+                // Payment successful
+                if ($payment->status !== 'captured' && $order->status === 'payment_intent') {
+                    DB::transaction(function () use ($order, $payment, $amount, $currency) {
+                        // Reload with lock to prevent race conditions
+                        $order = Order::lockForUpdate()->find($order->id);
+                        
+                        // Double-check status after lock
+                        if ($order->status !== 'payment_intent') {
+                            return; // Already processed
+                        }
+                        
+                        // Reload payment with lock
+                        $payment = Payment::lockForUpdate()->find($payment->id);
+                        
+                        // Double-check payment status
+                        if ($payment->status === 'captured') {
+                            return; // Already processed
+                        }
+                        
+                        // Get buyer wallet with lock
+                        $buyerWallet = Wallet::lockForUpdate()
+                            ->firstOrCreate(
+                                ['user_id' => $order->buyer_id],
+                                ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                            );
+                        
+                        // Payment confirmed - credit escrow
+                        $buyerWallet->on_hold_balance += $order->amount;
+                        $buyerWallet->save();
+
+                        // Update order status
+                        $oldStatus = $order->status;
+                        $order->status = 'escrow_hold';
+                        $order->paid_at = now();
+                        $order->escrow_hold_at = now();
+                        $order->escrow_release_at = now()->addHours(12);
+                        $order->save();
+                        
+                        // Update payment status
+                        $payment->status = 'captured';
+                        $payment->captured_at = now();
+                        $payment->save();
+                        
+                        // Mark listing as sold
+                        $listing = $order->listing;
+                        $listingSold = false;
+                        if ($listing && $listing->status === 'active') {
+                            $listing->status = 'sold';
+                            $listing->save();
+                            $listingSold = true;
+                        }
+                        
+                        // Audit log
+                        AuditHelper::log(
+                            'order.payment_confirmed',
+                            Order::class,
+                            $order->id,
+                            ['status' => $oldStatus, 'note' => 'Payment intent - not yet a real order'],
+                            [
+                                'status' => 'escrow_hold',
+                                'paid_at' => $order->paid_at->toIso8601String(),
+                                'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                                'note' => 'Order confirmed - payment received via HyperPay webhook',
+                            ],
+                            $request
+                        );
+                        
+                        // Send notifications
+                        $order->buyer->notify(new PaymentConfirmed($order));
+                        $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                        $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                        if ($listingSold && $listing) {
+                            $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                        }
+                        
+                        // Schedule escrow release job
+                        ReleaseEscrowFunds::dispatch($order->id)
+                            ->delay(now()->addHours(12));
+                    });
+                } else {
+                    // Payment already processed, just update status
+                    $payment->status = 'captured';
+                    $payment->captured_at = $payment->captured_at ?? now();
+                    $payment->save();
+                }
+            } elseif ($resultCode && $this->hyperPayService->isPaymentPending($resultCode)) {
+                // Payment pending
+                $payment->status = 'initiated';
+                $payment->save();
+            } else {
+                // Payment failed
+                $payment->status = 'failed';
+                $payment->save();
+            }
+
+            Log::info('HyperPay Webhook: Successfully processed', [
+                'payment_id' => $payment->id,
+                'order_id' => $order->id,
+                'result_code' => $resultCode,
+                'payment_status' => $payment->status,
+            ]);
+
+            return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+        } catch (\Exception $e) {
+            Log::error('HyperPay Webhook Error', [
+                'payload' => $payload,
                 'error' => $e->getMessage(),
                 'trace' => config('app.debug') ? $e->getTraceAsString() : null,
             ]);
