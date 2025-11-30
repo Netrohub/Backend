@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\ReleaseEscrowFunds;
 use App\Models\Listing;
 use App\Models\Order;
+use App\Models\User;
 use App\Models\Wallet;
 use App\Notifications\OrderStatusChanged;
 use Illuminate\Http\Request;
