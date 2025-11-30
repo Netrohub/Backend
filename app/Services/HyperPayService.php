@@ -21,12 +21,12 @@ class HyperPayService
         $environment = config('services.hyperpay.environment') ?? 'test';
         
         // Validate required configuration before assignment
-        if (empty($entityId)) {
-            throw new \RuntimeException('HyperPay entity_id is not configured. Please set HYPERPAY_ENTITY_ID in your .env file.');
+        if (empty($entityId) || $entityId === 'your_entity_id_here') {
+            throw new \RuntimeException('HyperPay entity_id is not configured. Please set HYPERPAY_ENTITY_ID in your .env file with your actual HyperPay entity ID.');
         }
         
-        if (empty($accessToken)) {
-            throw new \RuntimeException('HyperPay access_token is not configured. Please set HYPERPAY_ACCESS_TOKEN in your .env file.');
+        if (empty($accessToken) || $accessToken === 'your_access_token_here') {
+            throw new \RuntimeException('HyperPay access_token is not configured. Please set HYPERPAY_ACCESS_TOKEN in your .env file with your actual HyperPay access token.');
         }
         
         if (empty($baseUrl)) {

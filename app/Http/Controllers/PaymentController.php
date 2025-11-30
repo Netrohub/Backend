@@ -545,8 +545,8 @@ class PaymentController extends Controller
         // Prepare checkout data
         $shopperResultUrl = config('app.frontend_url') . '/payments/hyperpay/callback?order_id=' . $order->id;
         
+        // Note: entityId is used in Basic Auth, not as a form parameter
         $checkoutData = [
-            'entityId' => config('services.hyperpay.entity_id'),
             'amount' => number_format($order->amount, 2, '.', ''),
             'currency' => 'USD',
             'paymentType' => 'DB', // Debit (immediate payment)
