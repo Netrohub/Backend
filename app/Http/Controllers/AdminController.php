@@ -14,6 +14,7 @@ use App\Models\WithdrawalRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
 use App\Helpers\AuditHelper;
@@ -560,7 +561,11 @@ class AdminController extends Controller
             }
         }
         
+        $category = $listing->category;
         $listing->delete();
+
+        // Invalidate listings cache when listing is deleted
+        Cache::forget('listings_' . md5($category . ''));
 
         // Audit log
         AuditHelper::log(
