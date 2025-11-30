@@ -129,6 +129,16 @@ class WalletController extends Controller
             'account_holder_name.required' => 'اسم صاحب الحساب مطلوب',
         ]);
 
+        // Require Discord connection for withdrawals (sellers need Discord to withdraw)
+        $user = $request->user();
+        $user->refresh(); // Ensure we have latest Discord status
+        if (!$user->discord_user_id) {
+            return response()->json([
+                'message' => MessageHelper::WALLET_DISCORD_REQUIRED,
+                'error_code' => 'WITHDRAWAL_DISCORD_REQUIRED',
+            ], 400);
+        }
+
         // Check hourly withdrawal limit (additional protection beyond rate limiting)
         $recentWithdrawals = WithdrawalRequest::where('user_id', $request->user()->id)
             ->where('created_at', '>', now()->subHour())

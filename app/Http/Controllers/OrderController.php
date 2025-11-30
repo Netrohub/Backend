@@ -56,7 +56,7 @@ class OrderController extends Controller
                     throw new \Exception(MessageHelper::ORDER_CANNOT_BUY_OWN);
                 }
 
-                // Require Discord connection for buyer
+                // Require Discord connection for buyer (buyer needs Discord to create orders)
                 $buyer = $request->user();
                 // Refresh buyer to ensure we have latest Discord status
                 $buyer->refresh();
@@ -64,24 +64,8 @@ class OrderController extends Controller
                     throw new \Exception(MessageHelper::ORDER_BUYER_DISCORD_REQUIRED);
                 }
 
-                // Require Discord connection for seller
-                // Fetch seller fresh to ensure we have latest Discord status (not from relationship cache)
-                $seller = User::find($listing->user_id);
-                if (!$seller) {
-                    throw new \Exception('Seller not found.');
-                }
-                
-                // Debug logging for Discord connection check
-                Log::info('Checking seller Discord connection', [
-                    'seller_id' => $seller->id,
-                    'discord_user_id' => $seller->discord_user_id,
-                    'discord_username' => $seller->discord_username,
-                    'discord_connected_at' => $seller->discord_connected_at,
-                ]);
-                
-                if (!$seller->discord_user_id) {
-                    throw new \Exception(MessageHelper::ORDER_SELLER_DISCORD_REQUIRED);
-                }
+                // Note: Seller Discord is NOT required for order creation
+                // Sellers can sell without Discord, but will need it to withdraw funds
 
                 // Re-check status after lock (prevents race condition)
                 if ($listing->status !== 'active') {
@@ -123,9 +107,6 @@ class OrderController extends Controller
                 $httpStatus = 500;
             } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_BUYER_DISCORD_REQUIRED)) {
                 $errorCode = 'ORDER_BUYER_DISCORD_REQUIRED';
-                $httpStatus = 400;
-            } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_SELLER_DISCORD_REQUIRED)) {
-                $errorCode = 'ORDER_SELLER_DISCORD_REQUIRED';
                 $httpStatus = 400;
             } elseif (str_contains($e->getMessage(), MessageHelper::ORDER_CANNOT_BUY_OWN)) {
                 $errorCode = 'ORDER_CANNOT_BUY_OWN';
