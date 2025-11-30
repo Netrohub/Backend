@@ -44,17 +44,21 @@ class HyperPayService
      * Prepare checkout for COPYandPAY widget
      * 
      * @param array $data Checkout data including amount, currency, etc.
-     * @return array Response with checkout ID
+     * @return array Response with checkout ID and integrity hash
      */
     public function prepareCheckout(array $data): array
     {
         $url = rtrim($this->baseUrl, '/') . '/v1/checkouts';
+        
+        // Add integrity=true for PCI DSS v4.0 compliance
+        $data['integrity'] = 'true';
         
         Log::info('HyperPay: Preparing checkout', [
             'url' => $url,
             'entity_id' => $this->entityId,
             'amount' => $data['amount'] ?? null,
             'currency' => $data['currency'] ?? null,
+            'integrity' => true,
         ]);
 
         $response = Http::withBasicAuth($this->entityId, $this->accessToken)
@@ -80,6 +84,7 @@ class HyperPayService
 
         Log::info('HyperPay: Checkout prepared successfully', [
             'checkout_id' => $responseData['id'] ?? null,
+            'integrity' => $responseData['integrity'] ?? null,
         ]);
 
         return $responseData;

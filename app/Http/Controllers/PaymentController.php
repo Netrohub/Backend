@@ -589,18 +589,25 @@ class PaymentController extends Controller
 
             $payment = $result['payment'];
             $checkoutResponse = $result['checkoutResponse'];
-            $widgetScript = $this->hyperPayService->getWidgetScriptUrl($checkoutResponse['id']);
+            
+            // Extract integrity hash from checkout response (PCI DSS v4.0 compliance)
+            $integrity = $checkoutResponse['integrity'] ?? null;
+            
+            // Build widget script URL
+            $baseUrl = rtrim(config('services.hyperpay.base_url'), '/');
+            $widgetScriptUrl = "{$baseUrl}/v1/paymentWidgets.js?checkoutId={$checkoutResponse['id']}";
 
             Log::info('HyperPay checkout prepared', [
                 'order_id' => $order->id,
                 'checkout_id' => $checkoutResponse['id'],
+                'has_integrity' => !empty($integrity),
             ]);
 
             return response()->json([
                 'payment' => $payment,
                 'checkoutId' => $checkoutResponse['id'],
-                'widgetScriptUrl' => $widgetScript['url'],
-                'integrity' => $widgetScript['integrity'],
+                'widgetScriptUrl' => $widgetScriptUrl,
+                'integrity' => $integrity,
             ]);
         } catch (\Exception $e) {
             $errorCode = 'PAYMENT_CREATE_FAILED';
