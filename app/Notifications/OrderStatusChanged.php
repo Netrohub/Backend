@@ -96,7 +96,7 @@ class OrderStatusChanged extends Notification implements ShouldQueue
             ->line("Your order #{$orderData['id']} as {$role} {$message}.")
             ->line("Order Details:")
             ->line("- Order ID: #{$orderData['id']}")
-            ->line("- Amount: SAR " . number_format($orderData['amount'], 2))
+            ->line("- Amount: $" . number_format($orderData['amount'], 2) . " USD")
             ->line("- Status: " . ucfirst(str_replace('_', ' ', $this->newStatus)))
             ->when($this->newStatus === 'escrow_hold', function ($mail) {
                 return $mail->line('Your payment is secure and will be released to the seller after 12 hours if no dispute is filed.');

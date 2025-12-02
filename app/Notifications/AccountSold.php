@@ -96,7 +96,7 @@ class AccountSold extends Notification implements ShouldQueue
             ->line("Sale Details:")
             ->line("- Order ID: #{$data['order_id']}")
             ->line("- Listing: {$data['listing_title']}")
-            ->line("- Sale Amount: SAR " . number_format($data['order_amount'], 2))
+            ->line("- Sale Amount: $" . number_format($data['order_amount'], 2) . " USD")
             ->line("- Buyer: User #{$data['buyer_id']}")
             ->line("The funds from this sale are currently held in escrow and will be released to your wallet after 12 hours if no dispute is filed by the buyer.")
             ->line("You can track the order status and view your earnings in your dashboard.")

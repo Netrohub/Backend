@@ -132,13 +132,15 @@ class PaymentController extends Controller
                 }
 
                 // Create payment record
+                // Note: Order amount is in USD, payment record stores USD
+                // Paylink gateway receives SAR (converted above), but we store USD
                 $payment = Payment::create([
                     'order_id' => $order->id,
                     'user_id' => $order->buyer_id, // Store buyer ID for direct tracking
                     'paylink_transaction_no' => $paylinkResponse['transactionNo'],
                     'status' => 'initiated',
-                    'amount' => $order->amount,
-                    'currency' => 'SAR',
+                    'amount' => $order->amount, // USD amount
+                    'currency' => 'USD', // Store USD (order currency)
                     'paylink_response' => $paylinkResponse,
                 ]);
 
