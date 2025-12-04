@@ -579,7 +579,9 @@ class PaymentController extends Controller
 
         try {
             $result = DB::transaction(function () use ($order, $checkoutData, $request) {
-                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData);
+                // Use MADA entity ID by default (MADA is shown first in the widget)
+                // The widget will handle brand selection, but we use MADA entity ID for checkout creation
+                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData, 'MADA');
 
                 if (!isset($checkoutResponse['id'])) {
                     $errorMessage = $checkoutResponse['result']['description'] 

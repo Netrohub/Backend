@@ -95,7 +95,8 @@ return [
 
     'hyperpay' => [
         'base_url' => env('HYPERPAY_BASE_URL', 'https://eu-test.oppwa.com'),
-        'entity_id' => env('HYPERPAY_ENTITY_ID'),
+        'entity_id' => env('HYPERPAY_ENTITY_ID'), // Visa/MasterCard entity ID (default)
+        'entity_id_mada' => env('HYPERPAY_ENTITY_ID_MADA'), // MADA entity ID
         'access_token' => env('HYPERPAY_ACCESS_TOKEN'),
         'environment' => env('HYPERPAY_ENVIRONMENT', 'test'), // 'test' or 'live'
         'webhook_secret' => env('HYPERPAY_WEBHOOK_SECRET'),

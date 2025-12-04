@@ -9,7 +9,8 @@ use Illuminate\Support\Facades\Cache;
 class HyperPayService
 {
     private string $baseUrl;
-    private string $entityId;
+    private string $entityId; // Visa/MasterCard entity ID
+    private string $entityIdMada; // MADA entity ID
     private string $accessToken;
     private string $environment; // 'test' or 'live'
 
@@ -17,6 +18,7 @@ class HyperPayService
     {
         $baseUrl = config('services.hyperpay.base_url') ?? 'https://eu-test.oppwa.com';
         $entityId = config('services.hyperpay.entity_id') ?? '';
+        $entityIdMada = config('services.hyperpay.entity_id_mada') ?? '';
         $accessToken = config('services.hyperpay.access_token') ?? '';
         $environment = config('services.hyperpay.environment') ?? 'test';
         
@@ -36,32 +38,56 @@ class HyperPayService
         // Assign after validation (ensures non-null values)
         $this->baseUrl = $baseUrl;
         $this->entityId = $entityId;
+        $this->entityIdMada = $entityIdMada ?: $entityId; // Fallback to main entity ID if MADA not configured
         $this->accessToken = $accessToken;
         $this->environment = $environment;
+    }
+    
+    /**
+     * Get entity ID for a specific payment brand
+     * 
+     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc. Defaults to MADA
+     * @return string Entity ID to use
+     */
+    private function getEntityId(?string $brand = null): string
+    {
+        // Use MADA entity ID by default (MADA should be shown first)
+        // If MADA entity ID is not configured, fallback to main entity ID
+        if ($brand === 'MADA' || $brand === null) {
+            return $this->entityIdMada;
+        }
+        
+        // For Visa/MasterCard, use main entity ID
+        return $this->entityId;
     }
 
     /**
      * Prepare checkout for COPYandPAY widget
      * 
      * @param array $data Checkout data including amount, currency, etc.
+     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc. Defaults to MADA
      * @return array Response with checkout ID and integrity hash
      */
-    public function prepareCheckout(array $data): array
+    public function prepareCheckout(array $data, ?string $brand = null): array
     {
         $url = rtrim($this->baseUrl, '/') . '/v1/checkouts';
+        
+        // Get appropriate entity ID based on payment brand (defaults to MADA)
+        $entityId = $this->getEntityId($brand);
         
         // Add integrity=true for PCI DSS v4.0 compliance
         $data['integrity'] = 'true';
         
         Log::info('HyperPay: Preparing checkout', [
             'url' => $url,
-            'entity_id' => $this->entityId,
+            'entity_id' => $entityId,
+            'brand' => $brand ?? 'MADA (default)',
             'amount' => $data['amount'] ?? null,
             'currency' => $data['currency'] ?? null,
             'integrity' => true,
         ]);
 
-        $response = Http::withBasicAuth($this->entityId, $this->accessToken)
+        $response = Http::withBasicAuth($entityId, $this->accessToken)
             ->asForm()
             ->post($url, $data);
 
@@ -96,18 +122,22 @@ class HyperPayService
      * @param string $resourcePath Resource path from redirect (e.g., /v1/checkouts/{checkoutId}/payment)
      * @return array Payment status response
      */
-    public function getPaymentStatus(string $resourcePath): array
+    public function getPaymentStatus(string $resourcePath, ?string $brand = null): array
     {
         // Ensure resourcePath starts with /
         $resourcePath = '/' . ltrim($resourcePath, '/');
         $url = rtrim($this->baseUrl, '/') . $resourcePath;
         
+        // Get appropriate entity ID based on payment brand (defaults to MADA)
+        $entityId = $this->getEntityId($brand);
+        
         Log::info('HyperPay: Getting payment status', [
             'url' => $url,
             'resource_path' => $resourcePath,
+            'entity_id' => $entityId,
         ]);
 
-        $response = Http::withBasicAuth($this->entityId, $this->accessToken)
+        $response = Http::withBasicAuth($entityId, $this->accessToken)
             ->get($url);
 
         $responseData = $response->json();
