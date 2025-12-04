@@ -9,8 +9,7 @@ use Illuminate\Support\Facades\Cache;
 class HyperPayService
 {
     private string $baseUrl;
-    private string $entityId; // Visa/MasterCard entity ID
-    private string $entityIdMada; // MADA entity ID
+    private string $entityId; // Visa/MasterCard entity ID (also handles MADA)
     private string $accessToken;
     private string $environment; // 'test' or 'live'
 
@@ -18,7 +17,6 @@ class HyperPayService
     {
         $baseUrl = config('services.hyperpay.base_url') ?? 'https://eu-test.oppwa.com';
         $entityId = config('services.hyperpay.entity_id') ?? '';
-        $entityIdMada = config('services.hyperpay.entity_id_mada') ?? '';
         $accessToken = config('services.hyperpay.access_token') ?? '';
         $environment = config('services.hyperpay.environment') ?? 'test';
         
@@ -38,7 +36,6 @@ class HyperPayService
         // Assign after validation (ensures non-null values)
         $this->baseUrl = $baseUrl;
         $this->entityId = $entityId;
-        $this->entityIdMada = $entityIdMada ?: $entityId; // Fallback to main entity ID if MADA not configured
         $this->accessToken = trim($accessToken); // Remove any whitespace
         $this->environment = $environment;
         
@@ -46,7 +43,6 @@ class HyperPayService
         Log::info('HyperPayService initialized', [
             'base_url' => $this->baseUrl,
             'entity_id' => $this->entityId,
-            'entity_id_mada' => $this->entityIdMada,
             'environment' => $this->environment,
             'access_token_length' => strlen($this->accessToken),
             'access_token_starts_with' => substr($this->accessToken, 0, 10) . '...',
@@ -56,22 +52,16 @@ class HyperPayService
     /**
      * Get entity ID for a specific payment brand
      * 
-     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc.
+     * Always returns the Visa/MasterCard entity ID.
+     * MADA payments are handled through the same entity ID via the HyperPay widget.
+     * 
+     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc. (ignored - using single entity ID)
      * @return string Entity ID to use
      */
     private function getEntityId(?string $brand = null): string
     {
-        // Use Visa/MasterCard entity ID by default
-        // The access token provided is validated for Visa/MasterCard entity ID
-        // The HyperPay widget can handle MADA payments through the Visa/MasterCard entity ID
-        // Only use MADA entity ID if explicitly requested AND we have a separate MADA access token
-        if ($brand === 'MADA' && !empty($this->entityIdMada) && $this->entityIdMada !== $this->entityId) {
-            // Only use MADA entity ID if it's different from main entity ID
-            // Note: This requires a separate MADA access token to work properly
-            return $this->entityIdMada;
-        }
-        
-        // Default to Visa/MasterCard entity ID (works with provided access token)
+        // Always use Visa/MasterCard entity ID
+        // The HyperPay widget handles all payment brands (MADA, VISA, MASTER) through this single entity ID
         return $this->entityId;
     }
 
