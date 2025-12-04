@@ -547,22 +547,35 @@ class PaymentController extends Controller
         // Prepare checkout data
         $shopperResultUrl = config('app.frontend_url') . '/payments/hyperpay/callback?order_id=' . $order->id;
         
+        // Split user name into givenName and surname
+        $userName = $request->user()->name ?? '';
+        $nameParts = explode(' ', $userName, 2);
+        $givenName = $nameParts[0] ?? '';
+        $surname = $nameParts[1] ?? $givenName; // Use givenName as fallback if no surname
+        
         // Note: entityId is used in Basic Auth, not as a form parameter
         $checkoutData = [
             'amount' => number_format($order->amount, 2, '.', ''),
-            'currency' => 'USD',
+            'currency' => 'SAR', // Changed to SAR as per HyperPay requirements
             'paymentType' => 'DB', // Debit (immediate payment)
             'merchantTransactionId' => 'NXO-' . $order->id,
             'shopperResultUrl' => $shopperResultUrl,
-            'billing.street1' => '',
-            'billing.city' => '',
-            'billing.state' => '',
-            'billing.postcode' => '',
-            'billing.country' => 'US',
+            'billing.street1' => '', // TODO: Collect from user profile or checkout form
+            'billing.city' => '', // TODO: Collect from user profile or checkout form
+            'billing.state' => '', // TODO: Collect from user profile or checkout form
+            'billing.postcode' => '', // TODO: Collect from user profile or checkout form
+            'billing.country' => 'SA', // Default to Saudi Arabia (Alpha-2 code)
             'customer.email' => $request->user()->email,
-            'customer.givenName' => $request->user()->name ?? '',
-            'customer.surname' => '',
+            'customer.givenName' => $givenName,
+            'customer.surname' => $surname,
         ];
+        
+        // Add test mode parameters for test environment only
+        $environment = config('services.hyperpay.environment', 'test');
+        if ($environment === 'test') {
+            $checkoutData['testMode'] = 'EXTERNAL';
+            $checkoutData['customParameters[3DS2_enrolled]'] = 'true';
+        }
 
         try {
             $result = DB::transaction(function () use ($order, $checkoutData, $request) {
@@ -582,7 +595,7 @@ class PaymentController extends Controller
                     'hyperpay_checkout_id' => $checkoutResponse['id'],
                     'status' => 'initiated',
                     'amount' => $order->amount,
-                    'currency' => 'USD',
+                    'currency' => 'SAR', // Changed to SAR as per HyperPay requirements
                     'hyperpay_response' => $checkoutResponse,
                 ]);
 
