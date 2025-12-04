@@ -155,9 +155,15 @@ class ImageController extends Controller
         }
 
         if (empty($uploadedImages)) {
+            Log::error('Image upload: All images failed', [
+                'total_files' => count($files),
+                'user_id' => $request->user()?->id,
+            ]);
+            
             return response()->json([
-                'message' => 'No images were uploaded successfully',
+                'message' => 'No images were uploaded successfully. Please check: 1) File sizes are under 5MB each, 2) Files are valid images (JPEG, PNG, GIF, WebP), 3) Cloudflare Images service is configured correctly.',
                 'error_code' => 'UPLOAD_FAILED',
+                'total_files' => count($files),
             ], 500);
         }
 
