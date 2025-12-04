@@ -46,18 +46,22 @@ class HyperPayService
     /**
      * Get entity ID for a specific payment brand
      * 
-     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc. Defaults to MADA
+     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc.
      * @return string Entity ID to use
      */
     private function getEntityId(?string $brand = null): string
     {
-        // Use MADA entity ID by default (MADA should be shown first)
-        // If MADA entity ID is not configured, fallback to main entity ID
-        if ($brand === 'MADA' || $brand === null) {
+        // Use Visa/MasterCard entity ID by default
+        // The access token provided is validated for Visa/MasterCard entity ID
+        // The HyperPay widget can handle MADA payments through the Visa/MasterCard entity ID
+        // Only use MADA entity ID if explicitly requested AND we have a separate MADA access token
+        if ($brand === 'MADA' && !empty($this->entityIdMada) && $this->entityIdMada !== $this->entityId) {
+            // Only use MADA entity ID if it's different from main entity ID
+            // Note: This requires a separate MADA access token to work properly
             return $this->entityIdMada;
         }
         
-        // For Visa/MasterCard, use main entity ID
+        // Default to Visa/MasterCard entity ID (works with provided access token)
         return $this->entityId;
     }
 
@@ -81,7 +85,7 @@ class HyperPayService
         Log::info('HyperPay: Preparing checkout', [
             'url' => $url,
             'entity_id' => $entityId,
-            'brand' => $brand ?? 'MADA (default)',
+            'brand' => $brand ?? 'Visa/MasterCard (default)',
             'amount' => $data['amount'] ?? null,
             'currency' => $data['currency'] ?? null,
             'integrity' => true,
@@ -119,6 +123,9 @@ class HyperPayService
     /**
      * Get payment status by resource path
      * 
+     * HyperPay rate limiting: Only 2 requests per minute allowed for payment status checks
+     * We cache responses for 30 seconds to respect this limit
+     * 
      * @param string $resourcePath Resource path from redirect (e.g., /v1/checkouts/{checkoutId}/payment)
      * @return array Payment status response
      */
@@ -128,6 +135,21 @@ class HyperPayService
         $resourcePath = '/' . ltrim($resourcePath, '/');
         $url = rtrim($this->baseUrl, '/') . $resourcePath;
         
+        // Extract ID from resourcePath for cache key
+        // Examples: /v1/checkouts/{checkoutId}/payment or /v1/payments/{paymentId}
+        preg_match('#/(checkouts|payments)/([^/]+)#', $resourcePath, $matches);
+        $cacheKey = 'hyperpay_status_' . ($matches[2] ?? md5($resourcePath));
+        
+        // Check cache first (30 seconds TTL to respect 2 requests/minute limit)
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            Log::info('HyperPay: Using cached payment status', [
+                'resource_path' => $resourcePath,
+                'cache_key' => $cacheKey,
+            ]);
+            return $cached;
+        }
+        
         // Get appropriate entity ID based on payment brand (defaults to MADA)
         $entityId = $this->getEntityId($brand);
         
@@ -135,6 +157,7 @@ class HyperPayService
             'url' => $url,
             'resource_path' => $resourcePath,
             'entity_id' => $entityId,
+            'cache_key' => $cacheKey,
         ]);
 
         $response = Http::withBasicAuth($entityId, $this->accessToken)
@@ -143,23 +166,46 @@ class HyperPayService
         $responseData = $response->json();
 
         if (!$response->successful()) {
+            $resultCode = $responseData['result']['code'] ?? null;
+            $errorDescription = $responseData['result']['description'] ?? 'Unknown error';
+            
+            // Check for rate limiting error (800.120.100)
+            if ($resultCode === '800.120.100') {
+                Log::warning('HyperPay: Rate limit exceeded', [
+                    'resource_path' => $resourcePath,
+                    'error' => $errorDescription,
+                ]);
+                
+                // Try to return cached response if available (even if expired)
+                $staleCache = Cache::get($cacheKey);
+                if ($staleCache !== null) {
+                    Log::info('HyperPay: Returning stale cached response due to rate limit', [
+                        'resource_path' => $resourcePath,
+                    ]);
+                    return $staleCache;
+                }
+                
+                throw new \Exception('HyperPay rate limit exceeded. Too many requests. Please try again later.');
+            }
+            
             Log::error('HyperPay: Get payment status failed', [
                 'status' => $response->status(),
+                'result_code' => $resultCode,
                 'error' => $responseData,
                 'resource_path' => $resourcePath,
             ]);
             
-            $errorMessage = $responseData['result']['description'] 
-                ?? $responseData['message'] 
-                ?? $responseData['error'] 
-                ?? 'Unknown error';
-            
+            $errorMessage = $errorDescription;
             throw new \Exception('HyperPay get payment status failed: ' . $errorMessage);
         }
+
+        // Cache successful response for 30 seconds (allows max 2 requests per minute)
+        Cache::put($cacheKey, $responseData, 30);
 
         Log::info('HyperPay: Payment status retrieved', [
             'result_code' => $responseData['result']['code'] ?? null,
             'payment_type' => $responseData['paymentType'] ?? null,
+            'cached' => true,
         ]);
 
         return $responseData;

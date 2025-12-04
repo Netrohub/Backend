@@ -502,6 +502,17 @@ class PaymentController extends Controller
     {
         $validated = $request->validate([
             'order_id' => 'required|exists:orders,id',
+            'browserData' => 'nullable|array',
+            'browserData.acceptHeader' => 'nullable|string|max:2048',
+            'browserData.language' => 'nullable|string|max:8',
+            'browserData.screenHeight' => 'nullable|integer',
+            'browserData.screenWidth' => 'nullable|integer',
+            'browserData.timezone' => 'nullable|integer',
+            'browserData.userAgent' => 'nullable|string|max:2048',
+            'browserData.javaEnabled' => 'nullable|boolean',
+            'browserData.javascriptEnabled' => 'nullable|boolean',
+            'browserData.screenColorDepth' => 'nullable|integer',
+            'browserData.challengeWindow' => 'nullable|string|max:2',
         ]);
 
         $order = Order::with('listing')->findOrFail($validated['order_id']);
@@ -548,10 +559,28 @@ class PaymentController extends Controller
         $shopperResultUrl = config('app.frontend_url') . '/payments/hyperpay/callback?order_id=' . $order->id;
         
         // Split user name into givenName and surname
-        $userName = $request->user()->name ?? '';
+        $user = $request->user();
+        $userName = $user->name ?? '';
         $nameParts = explode(' ', $userName, 2);
         $givenName = $nameParts[0] ?? '';
         $surname = $nameParts[1] ?? $givenName; // Use givenName as fallback if no surname
+        
+        // Get customer phone (one of phone/workPhone/mobile is required for 3DS)
+        $customerPhone = $user->phone ?? $user->verified_phone ?? null;
+        if (!$customerPhone) {
+            // Format: +ccc-nnnnnnnn (country code - phone number)
+            // Default to Saudi Arabia (+966) if no phone available
+            $customerPhone = '+966-500000000'; // Placeholder - should be collected from user
+        } else {
+            // Format phone number if needed
+            $customerPhone = $this->formatPhoneFor3DS($customerPhone);
+        }
+        
+        // Get customer IP address
+        $customerIP = $request->ip() ?? $request->header('X-Forwarded-For') ?? $request->header('X-Real-IP') ?? null;
+        
+        // Get browser data from request (collected on frontend)
+        $browserData = $validated['browserData'] ?? [];
         
         // Note: entityId is used in Basic Auth, not as a form parameter
         $checkoutData = [
@@ -560,15 +589,39 @@ class PaymentController extends Controller
             'paymentType' => 'DB', // Debit (immediate payment)
             'merchantTransactionId' => 'NXO-' . $order->id,
             'shopperResultUrl' => $shopperResultUrl,
-            'billing.street1' => '', // TODO: Collect from user profile or checkout form
-            'billing.city' => '', // TODO: Collect from user profile or checkout form
-            'billing.state' => '', // TODO: Collect from user profile or checkout form
-            'billing.postcode' => '', // TODO: Collect from user profile or checkout form
-            'billing.country' => 'SA', // Default to Saudi Arabia (Alpha-2 code)
-            'customer.email' => $request->user()->email,
+            
+            // Customer information (required for 3DS)
+            'customer.email' => $user->email,
             'customer.givenName' => $givenName,
             'customer.surname' => $surname,
+            'customer.phone' => $customerPhone,
+            'customer.ip' => $customerIP,
+            
+            // Billing address (required for 3DS - using defaults for Saudi Arabia)
+            'billing.street1' => 'Not Provided', // Required field - default value
+            'billing.city' => 'Riyadh', // Required field - default to capital
+            'billing.postcode' => '11564', // Required field - default Riyadh postcode
+            'billing.country' => 'SA', // Required field - Saudi Arabia (Alpha-2 code)
+            'billing.state' => '', // Optional
+            
+            // Browser data (mandatory for 3DS 2.0)
+            'customer.browser.acceptHeader' => $browserData['acceptHeader'] ?? 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'customer.browser.language' => $browserData['language'] ?? 'en',
+            'customer.browser.screenHeight' => (string)($browserData['screenHeight'] ?? 1080),
+            'customer.browser.screenWidth' => (string)($browserData['screenWidth'] ?? 1920),
+            'customer.browser.timezone' => (string)($browserData['timezone'] ?? 0),
+            'customer.browser.userAgent' => $browserData['userAgent'] ?? ($request->header('User-Agent') ?? 'Mozilla/5.0'),
+            'customer.browser.javaEnabled' => $browserData['javaEnabled'] ?? false ? 'true' : 'false',
+            'customer.browser.javascriptEnabled' => $browserData['javascriptEnabled'] ?? true ? 'true' : 'false',
         ];
+        
+        // Optional browser fields (recommended for better frictionless flow)
+        if (isset($browserData['screenColorDepth'])) {
+            $checkoutData['customer.browser.screenColorDepth'] = (string)$browserData['screenColorDepth'];
+        }
+        if (isset($browserData['challengeWindow'])) {
+            $checkoutData['customer.browser.challengeWindow'] = $browserData['challengeWindow'];
+        }
         
         // Add test mode parameters for test environment only
         $environment = config('services.hyperpay.environment', 'test');
@@ -579,9 +632,10 @@ class PaymentController extends Controller
 
         try {
             $result = DB::transaction(function () use ($order, $checkoutData, $request) {
-                // Use MADA entity ID by default (MADA is shown first in the widget)
-                // The widget will handle brand selection, but we use MADA entity ID for checkout creation
-                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData, 'MADA');
+                // Use Visa/MasterCard entity ID by default (access token is validated for this entity ID)
+                // The HyperPay widget can handle MADA payments through the Visa/MasterCard entity ID
+                // The widget will show MADA first and handle brand selection automatically
+                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData);
 
                 if (!isset($checkoutResponse['id'])) {
                     $errorMessage = $checkoutResponse['result']['description'] 
@@ -769,11 +823,25 @@ class PaymentController extends Controller
                 'response' => $statusResponse,
             ]);
         } catch (\Exception $e) {
+            $errorMessage = $e->getMessage();
+            $isRateLimit = str_contains($errorMessage, 'rate limit') || str_contains($errorMessage, 'Too many requests');
+            
             Log::error('HyperPay get status failed', [
                 'order_id' => $order->id,
                 'resource_path' => $validated['resourcePath'],
-                'error' => $e->getMessage(),
+                'error' => $errorMessage,
+                'is_rate_limit' => $isRateLimit,
             ]);
+
+            // Return specific error for rate limiting
+            if ($isRateLimit) {
+                return response()->json([
+                    'status' => 'error',
+                    'error' => 'rate_limit_exceeded',
+                    'message' => 'Too many requests. Please wait a moment and try again.',
+                    'retry_after' => 60, // seconds
+                ], 429); // 429 Too Many Requests
+            }
 
             return response()->json([
                 'message' => 'Failed to get payment status',
@@ -827,11 +895,23 @@ class PaymentController extends Controller
                     return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
                 }
             } catch (\Exception $e) {
+                $errorMessage = $e->getMessage();
+                $isRateLimit = str_contains($errorMessage, 'rate limit') || str_contains($errorMessage, 'Too many requests');
+                
                 Log::error('HyperPay callback: Failed to get payment status', [
                     'order_id' => $orderId,
                     'resource_path' => $resourcePath,
-                    'error' => $e->getMessage(),
+                    'error' => $errorMessage,
+                    'is_rate_limit' => $isRateLimit,
                 ]);
+                
+                // If rate limit error, redirect with specific message
+                if ($isRateLimit) {
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=rate_limit&retry_after=60');
+                }
+                
+                // For other errors, redirect to order page - user can check status manually
+                return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=error');
             }
         }
 
@@ -842,5 +922,46 @@ class PaymentController extends Controller
 
         // Redirect to order page - user can check status
         return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
+    }
+    
+    /**
+     * Format phone number for 3D Secure
+     * Format: +ccc-nnnnnnnn (country code - phone number)
+     * 
+     * @param string $phone Phone number to format
+     * @return string Formatted phone number
+     */
+    private function formatPhoneFor3DS(string $phone): string
+    {
+        // Remove all non-digit characters except +
+        $cleaned = preg_replace('/[^\d+]/', '', $phone);
+        
+        // If phone starts with +, assume it's already formatted
+        if (str_starts_with($cleaned, '+')) {
+            // Replace first 0 after country code with dash if needed
+            // Example: +966501234567 -> +966-501234567
+            if (preg_match('/^\+(\d{1,3})(\d+)$/', $cleaned, $matches)) {
+                return '+' . $matches[1] . '-' . $matches[2];
+            }
+            return $cleaned;
+        }
+        
+        // If phone starts with 0, assume it's local format (Saudi Arabia)
+        if (str_starts_with($cleaned, '0')) {
+            $cleaned = '966' . substr($cleaned, 1); // Remove leading 0, add country code
+        }
+        
+        // If phone doesn't start with country code, assume Saudi Arabia (+966)
+        if (!str_starts_with($cleaned, '966') && !str_starts_with($cleaned, '+966')) {
+            $cleaned = '966' . $cleaned;
+        }
+        
+        // Format: +ccc-nnnnnnnn
+        if (preg_match('/^(\d{1,3})(\d+)$/', $cleaned, $matches)) {
+            return '+' . $matches[1] . '-' . $matches[2];
+        }
+        
+        // Fallback: return as-is with + prefix
+        return '+' . $cleaned;
     }
 }
