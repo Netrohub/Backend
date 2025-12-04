@@ -64,15 +64,12 @@ class OrderController extends Controller
                     throw new \Exception(MessageHelper::ORDER_BUYER_DISCORD_REQUIRED);
                 }
 
-                // Require Discord connection for seller
-                // Fetch seller fresh to ensure we have latest Discord status (not from relationship cache)
+                // Note: Seller Discord connection is no longer required for order creation
+                // Buyers can purchase from sellers even if seller hasn't connected Discord
+                // Fetch seller to ensure they exist
                 $seller = User::find($listing->user_id);
                 if (!$seller) {
                     throw new \Exception('Seller not found.');
-                }
-                
-                if (!$seller->discord_user_id) {
-                    throw new \Exception(MessageHelper::ORDER_SELLER_DISCORD_REQUIRED);
                 }
 
                 // Re-check status after lock (prevents race condition)
