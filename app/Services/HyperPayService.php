@@ -39,8 +39,18 @@ class HyperPayService
         $this->baseUrl = $baseUrl;
         $this->entityId = $entityId;
         $this->entityIdMada = $entityIdMada ?: $entityId; // Fallback to main entity ID if MADA not configured
-        $this->accessToken = $accessToken;
+        $this->accessToken = trim($accessToken); // Remove any whitespace
         $this->environment = $environment;
+        
+        // Log configuration (without sensitive data)
+        Log::info('HyperPayService initialized', [
+            'base_url' => $this->baseUrl,
+            'entity_id' => $this->entityId,
+            'entity_id_mada' => $this->entityIdMada,
+            'environment' => $this->environment,
+            'access_token_length' => strlen($this->accessToken),
+            'access_token_starts_with' => substr($this->accessToken, 0, 10) . '...',
+        ]);
     }
     
     /**
@@ -89,8 +99,11 @@ class HyperPayService
             'amount' => $data['amount'] ?? null,
             'currency' => $data['currency'] ?? null,
             'integrity' => true,
+            'access_token_length' => strlen($this->accessToken),
         ]);
 
+        // Make HTTP request with Basic Auth
+        // HyperPay uses entityId as username and accessToken as password
         $response = Http::withBasicAuth($entityId, $this->accessToken)
             ->asForm()
             ->post($url, $data);
@@ -98,16 +111,29 @@ class HyperPayService
         $responseData = $response->json();
 
         if (!$response->successful()) {
+            $errorCode = $responseData['result']['code'] ?? null;
+            $errorDescription = $responseData['result']['description'] ?? 'Unknown error';
+            
             Log::error('HyperPay: Checkout preparation failed', [
                 'status' => $response->status(),
+                'error_code' => $errorCode,
+                'error_description' => $errorDescription,
                 'error' => $responseData,
-                'request_data' => $data,
+                'entity_id_used' => $entityId,
+                'url' => $url,
+                'request_data_keys' => array_keys($data), // Log keys only, not values
             ]);
             
-            $errorMessage = $responseData['result']['description'] 
-                ?? $responseData['message'] 
-                ?? $responseData['error'] 
-                ?? 'Unknown error';
+            // Provide more specific error message for authentication errors
+            if ($errorCode === '800.900.300' || $response->status() === 401) {
+                $errorMessage = 'HyperPay authentication failed. Please verify: '
+                    . '1) HYPERPAY_ENTITY_ID matches the entity ID in your HyperPay dashboard, '
+                    . '2) HYPERPAY_ACCESS_TOKEN is correct and matches this entity ID, '
+                    . '3) You are using the correct environment (test vs production). '
+                    . 'Error: ' . $errorDescription;
+            } else {
+                $errorMessage = $errorDescription;
+            }
             
             throw new \Exception('HyperPay checkout preparation failed: ' . $errorMessage);
         }
