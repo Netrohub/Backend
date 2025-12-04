@@ -224,16 +224,20 @@ Route::prefix('v1')->group(function () {
         // Settings (public read access for certain settings)
         Route::get('/settings/{key}', [SettingsController::class, 'show']);
 
-        // Listing and image management (only verified users can upload or create)
-        Route::middleware(['kycVerified', 'throttle:30,1', \App\Http\Middleware\RequireDiscordForSellers::class])->group(function () {
-            Route::post('/listings', [ListingController::class, 'store']);
-            Route::put('/listings/{id}', [ListingController::class, 'update']);
-            Route::delete('/listings/{id}', [ListingController::class, 'destroy']);
-
+        // Images (for listings) - Allow upload without Discord requirement
+        // Discord is only required when actually creating the listing
+        Route::middleware(['kycVerified', 'throttle:30,1'])->group(function () {
             Route::post('/images/upload', [ImageController::class, 'upload']);
             Route::get('/images', [ImageController::class, 'index']);
             Route::delete('/images/{id}', [ImageController::class, 'destroy']);
             Route::get('/images/verify-config', [ImageController::class, 'verifyConfig']);
+        });
+        
+        // Listing management - Require Discord for sellers
+        Route::middleware(['kycVerified', 'throttle:30,1', \App\Http\Middleware\RequireDiscordForSellers::class])->group(function () {
+            Route::post('/listings', [ListingController::class, 'store']);
+            Route::put('/listings/{id}', [ListingController::class, 'update']);
+            Route::delete('/listings/{id}', [ListingController::class, 'destroy']);
         });
         
         // Auction management (verified users can create, anyone verified can bid)
