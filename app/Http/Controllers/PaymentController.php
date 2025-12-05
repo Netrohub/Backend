@@ -1167,20 +1167,44 @@ class PaymentController extends Controller
         }
 
         try {
-            // Find payment record first
+            // Find payment record first - try exact match first, then fallback to any payment for this order
             $payment = Payment::where('order_id', $order->id)
                 ->where('paypal_order_id', $validated['paypal_order_id'])
                 ->first();
             
+            // If not found, try to find any payment for this order with PayPal
             if (!$payment) {
-                Log::error('PayPal capture: Payment record not found', [
+                $payment = Payment::where('order_id', $order->id)
+                    ->whereNotNull('paypal_order_id')
+                    ->first();
+                
+                if ($payment && $payment->paypal_order_id !== $validated['paypal_order_id']) {
+                    // Update the payment record with the correct PayPal order ID
+                    Log::info('PayPal capture: Updating payment record with PayPal order ID', [
+                        'payment_id' => $payment->id,
+                        'old_paypal_order_id' => $payment->paypal_order_id,
+                        'new_paypal_order_id' => $validated['paypal_order_id'],
+                    ]);
+                    $payment->paypal_order_id = $validated['paypal_order_id'];
+                    $payment->save();
+                }
+            }
+            
+            // If still not found, create a new payment record (shouldn't happen, but handle gracefully)
+            if (!$payment) {
+                Log::warning('PayPal capture: Payment record not found, creating new one', [
                     'order_id' => $order->id,
                     'paypal_order_id' => $validated['paypal_order_id'],
                 ]);
-                return response()->json([
-                    'message' => 'Payment record not found. Please try creating a new payment.',
-                    'error_code' => 'PAYMENT_NOT_FOUND',
-                ], 404);
+                
+                $payment = Payment::create([
+                    'order_id' => $order->id,
+                    'user_id' => $order->buyer_id,
+                    'paypal_order_id' => $validated['paypal_order_id'],
+                    'status' => 'initiated',
+                    'amount' => $order->amount,
+                    'currency' => 'USD',
+                ]);
             }
             
             $captureResponse = $this->payPalService->captureOrder($validated['paypal_order_id']);
