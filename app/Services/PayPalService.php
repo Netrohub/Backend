@@ -72,11 +72,16 @@ class PayPalService
 
         if (!$response->successful()) {
             $error = $response->json();
+            $errorMessage = $error['error_description'] ?? $error['error'] ?? 'Unknown error';
+            
             Log::error('PayPal: Failed to get access token', [
                 'status' => $response->status(),
                 'error' => $error,
+                'error_message' => $errorMessage,
+                'url' => $url,
             ]);
-            throw new \Exception('PayPal authentication failed: ' . ($error['error_description'] ?? 'Unknown error'));
+            
+            throw new \Exception('PayPal authentication failed: ' . $errorMessage);
         }
 
         $data = $response->json();
@@ -105,6 +110,10 @@ class PayPalService
             'url' => $url,
             'amount' => $orderData['purchase_units'][0]['amount']['value'] ?? null,
             'currency' => $orderData['purchase_units'][0]['amount']['currency_code'] ?? null,
+            'intent' => $orderData['intent'] ?? null,
+            'has_application_context' => isset($orderData['application_context']),
+            'return_url' => $orderData['application_context']['return_url'] ?? null,
+            'cancel_url' => $orderData['application_context']['cancel_url'] ?? null,
         ]);
 
         $response = Http::withToken($accessToken)
@@ -118,16 +127,35 @@ class PayPalService
         $responseData = $response->json();
 
         if (!$response->successful()) {
+            // Log detailed error information
+            $errorDetails = $responseData['details'] ?? [];
+            $errorName = $responseData['name'] ?? null;
+            $errorMessage = $responseData['message'] ?? $responseData['error_description'] ?? 'Unknown error';
+            $errorDebugId = $responseData['debug_id'] ?? null;
+            
             Log::error('PayPal: Order creation failed', [
                 'status' => $response->status(),
-                'error' => $responseData,
+                'error_name' => $errorName,
+                'error_message' => $errorMessage,
+                'debug_id' => $errorDebugId,
+                'error_details' => $errorDetails,
+                'full_response' => $responseData,
+                'request_url' => $url,
             ]);
 
-            $errorMessage = $responseData['message'] 
-                ?? $responseData['error_description'] 
-                ?? 'Unknown error';
+            // Build detailed error message
+            $detailedError = $errorMessage;
+            if ($errorName) {
+                $detailedError = $errorName . ': ' . $detailedError;
+            }
+            if (!empty($errorDetails)) {
+                $detailedError .= ' | Details: ' . json_encode($errorDetails);
+            }
+            if ($errorDebugId) {
+                $detailedError .= ' | Debug ID: ' . $errorDebugId;
+            }
             
-            throw new \Exception('PayPal order creation failed: ' . $errorMessage);
+            throw new \Exception('PayPal order creation failed: ' . $detailedError);
         }
 
         Log::info('PayPal: Order created successfully', [
