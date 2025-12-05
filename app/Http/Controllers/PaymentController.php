@@ -1036,7 +1036,7 @@ class PaymentController extends Controller
             ],
             'application_context' => [
                 'brand_name' => config('app.name', 'NXOLand'),
-                'landing_page' => 'BILLING',
+                'landing_page' => 'BILLING', // BILLING enables guest checkout (card payment without PayPal account)
                 'user_action' => 'PAY_NOW',
                 'return_url' => $returnUrl,
                 'cancel_url' => $cancelUrl,
