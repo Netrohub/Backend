@@ -1050,7 +1050,8 @@ class PaymentController extends Controller
 
         // Build PayPal order payload using Orders v2 API
         // Reference: https://developer.paypal.com/docs/api/orders/v2/
-        $returnUrl = config('app.frontend_url') . '/payments/paypal/callback?order_id=' . $order->id;
+        // Return URL must point to backend (where the callback route is defined)
+        $returnUrl = config('app.url') . '/payments/paypal/callback?order_id=' . $order->id;
         $cancelUrl = config('app.frontend_url') . '/checkout?order_id=' . $order->id . '&payment=cancelled';
         
         // Convert USD to appropriate currency for PayPal (PayPal supports USD)
