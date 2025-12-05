@@ -16,7 +16,6 @@ class PayPalService
 
     public function __construct()
     {
-        $this->baseUrl = config('services.paypal.base_url');
         $this->clientId = config('services.paypal.client_id') ?? '';
         $this->clientSecret = config('services.paypal.client_secret') ?? '';
         $this->environment = config('services.paypal.environment', 'sandbox');
@@ -29,7 +28,11 @@ class PayPalService
             throw new \RuntimeException('PayPal client_secret is not configured. Please set PAYPAL_CLIENT_SECRET in your .env file.');
         }
 
-        if (empty($this->baseUrl)) {
+        // Set base URL - use config if provided, otherwise default based on environment
+        $configBaseUrl = config('services.paypal.base_url');
+        if (!empty($configBaseUrl)) {
+            $this->baseUrl = $configBaseUrl;
+        } else {
             // Set default base URL based on environment
             $this->baseUrl = $this->environment === 'live' 
                 ? 'https://api-m.paypal.com'
