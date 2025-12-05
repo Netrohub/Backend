@@ -96,6 +96,53 @@ class PayPalService
     }
 
     /**
+     * Generate client token for JavaScript SDK v6
+     * 
+     * @return string Client token
+     */
+    public function generateClientToken(): string
+    {
+        $url = rtrim($this->baseUrl, '/') . '/v1/identity/generate-token';
+        $accessToken = $this->getAccessToken();
+
+        Log::info('PayPal: Generating client token', [
+            'url' => $url,
+        ]);
+
+        $response = Http::withToken($accessToken)
+            ->withHeaders([
+                'Content-Type' => 'application/json',
+                'Accept' => 'application/json',
+            ])
+            ->post($url, []);
+
+        $responseData = $response->json();
+
+        if (!$response->successful()) {
+            Log::error('PayPal: Failed to generate client token', [
+                'status' => $response->status(),
+                'error' => $responseData,
+            ]);
+
+            $errorMessage = $responseData['message'] 
+                ?? $responseData['error_description'] 
+                ?? 'Unknown error';
+            
+            throw new \Exception('PayPal client token generation failed: ' . $errorMessage);
+        }
+
+        $clientToken = $responseData['client_token'] ?? null;
+        
+        if (!$clientToken) {
+            throw new \Exception('PayPal client token generation failed: No token in response');
+        }
+
+        Log::info('PayPal: Client token generated successfully');
+
+        return $clientToken;
+    }
+
+    /**
      * Create a PayPal order
      * 
      * @param array $orderData Order data including amount, currency, etc.
@@ -193,17 +240,36 @@ class PayPalService
         $responseData = $response->json();
 
         if (!$response->successful()) {
+            // Log detailed error information
+            $errorDetails = $responseData['details'] ?? [];
+            $errorName = $responseData['name'] ?? null;
+            $errorMessage = $responseData['message'] ?? $responseData['error_description'] ?? 'Unknown error';
+            $errorDebugId = $responseData['debug_id'] ?? null;
+            
             Log::error('PayPal: Order capture failed', [
                 'status' => $response->status(),
                 'order_id' => $orderId,
-                'error' => $responseData,
+                'error_name' => $errorName,
+                'error_message' => $errorMessage,
+                'debug_id' => $errorDebugId,
+                'error_details' => $errorDetails,
+                'full_response' => $responseData,
+                'request_url' => $url,
             ]);
 
-            $errorMessage = $responseData['message'] 
-                ?? $responseData['error_description'] 
-                ?? 'Unknown error';
+            // Build detailed error message
+            $detailedError = $errorMessage;
+            if ($errorName) {
+                $detailedError = $errorName . ': ' . $detailedError;
+            }
+            if (!empty($errorDetails)) {
+                $detailedError .= ' | Details: ' . json_encode($errorDetails);
+            }
+            if ($errorDebugId) {
+                $detailedError .= ' | Debug ID: ' . $errorDebugId;
+            }
             
-            throw new \Exception('PayPal order capture failed: ' . $errorMessage);
+            throw new \Exception('PayPal order capture failed: ' . $detailedError);
         }
 
         Log::info('PayPal: Order captured successfully', [

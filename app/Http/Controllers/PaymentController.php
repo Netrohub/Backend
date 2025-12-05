@@ -968,6 +968,32 @@ class PaymentController extends Controller
     }
 
     /**
+     * Get PayPal client token for JavaScript SDK v6
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPayPalClientToken(Request $request)
+    {
+        try {
+            $clientToken = $this->payPalService->generateClientToken();
+            
+            return response()->json([
+                'clientToken' => $clientToken,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('PayPal client token generation failed', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to generate client token',
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
+            ], 500);
+        }
+    }
+
+    /**
      * Create PayPal order
      * 
      * @param Request $request
@@ -1008,11 +1034,16 @@ class PaymentController extends Controller
             ->first();
 
         if ($existingPayment && $existingPayment->paypal_order_id) {
-            // Return existing order info
+            // Return existing order info - this is fine for idempotency
+            // PayPal SDK can use the existing order ID
+            Log::info('PayPal: Returning existing order', [
+                'order_id' => $order->id,
+                'paypal_order_id' => $existingPayment->paypal_order_id,
+            ]);
             return response()->json([
-                'message' => 'Payment already initiated for this order. You can continue with the existing payment.',
                 'payment' => $existingPayment,
                 'paypalOrderId' => $existingPayment->paypal_order_id,
+                'status' => 'CREATED',
                 'error_code' => 'PAYMENT_ALREADY_EXISTS',
             ], 200);
         }
@@ -1136,19 +1167,44 @@ class PaymentController extends Controller
         }
 
         try {
+            // Find payment record first
+            $payment = Payment::where('order_id', $order->id)
+                ->where('paypal_order_id', $validated['paypal_order_id'])
+                ->first();
+            
+            if (!$payment) {
+                Log::error('PayPal capture: Payment record not found', [
+                    'order_id' => $order->id,
+                    'paypal_order_id' => $validated['paypal_order_id'],
+                ]);
+                return response()->json([
+                    'message' => 'Payment record not found. Please try creating a new payment.',
+                    'error_code' => 'PAYMENT_NOT_FOUND',
+                ], 404);
+            }
+            
             $captureResponse = $this->payPalService->captureOrder($validated['paypal_order_id']);
             
             $status = $captureResponse['status'] ?? null;
             $isSuccessful = $status && $this->payPalService->isOrderSuccessful($status);
 
             if ($isSuccessful) {
-                // Process payment
-                $payment = Payment::where('order_id', $order->id)
-                    ->where('paypal_order_id', $validated['paypal_order_id'])
-                    ->first();
-                
-                if ($payment && $payment->status !== 'captured') {
+                // Process payment if not already captured
+                if ($payment->status !== 'captured') {
                     DB::transaction(function () use ($payment, $captureResponse, $order) {
+                        // Reload with lock to prevent race conditions
+                        $payment = Payment::lockForUpdate()->find($payment->id);
+                        $order = Order::lockForUpdate()->find($order->id);
+                        
+                        // Double-check payment status after lock
+                        if ($payment->status === 'captured') {
+                            Log::info('PayPal capture: Payment already captured', [
+                                'payment_id' => $payment->id,
+                                'order_id' => $order->id,
+                            ]);
+                            return; // Already processed
+                        }
+                        
                         $payment->status = 'captured';
                         $payment->captured_at = now();
                         $payment->paypal_response = array_merge($payment->paypal_response ?? [], $captureResponse);
@@ -1198,17 +1254,28 @@ class PaymentController extends Controller
             return response()->json([
                 'status' => $isSuccessful ? 'success' : ($this->payPalService->isOrderPending($status) ? 'pending' : 'failed'),
                 'paypalOrderId' => $validated['paypal_order_id'],
+                'message' => $isSuccessful ? 'Payment captured successfully' : ($this->payPalService->isOrderPending($status) ? 'Payment is pending' : 'Payment capture failed'),
                 'response' => $captureResponse,
             ]);
         } catch (\Exception $e) {
+            $errorMessage = $e->getMessage();
+            $isPayPalError = str_contains($errorMessage, 'PayPal');
+            
             Log::error('PayPal order capture failed', [
                 'order_id' => $order->id,
                 'paypal_order_id' => $validated['paypal_order_id'],
-                'error' => $e->getMessage(),
+                'error' => $errorMessage,
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
             ]);
 
+            // Provide user-friendly error message
+            $userMessage = $isPayPalError 
+                ? 'Payment processing failed. Please try again or contact support if payment was deducted.'
+                : 'Failed to capture payment. Please try again.';
+
             return response()->json([
-                'message' => 'Failed to capture payment',
+                'message' => $userMessage,
+                'error_code' => 'PAYMENT_CAPTURE_FAILED',
                 'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
             ], 500);
         }
