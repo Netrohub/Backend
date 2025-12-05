@@ -98,23 +98,34 @@ class PayPalService
     /**
      * Generate client token for JavaScript SDK v6
      * 
-     * @return string Client token
+     * Uses the OAuth2 token endpoint with client_token response type
+     * Reference: https://docs.paypal.ai/developer/how-to/sdk/js/v6/configuration#get-client-token
+     * 
+     * @return string Client token (the access_token from the response)
      */
     public function generateClientToken(): string
     {
-        $url = rtrim($this->baseUrl, '/') . '/v1/identity/generate-token';
-        $accessToken = $this->getAccessToken();
-
+        $url = rtrim($this->baseUrl, '/') . '/v1/oauth2/token';
+        
+        // Get frontend URL for domain binding (required for security)
+        $frontendUrl = config('app.frontend_url', 'https://nxoland.com');
+        // Remove protocol and path, keep only domain
+        $domain = parse_url($frontendUrl, PHP_URL_HOST) ?? parse_url($frontendUrl, PHP_URL_PATH);
+        
         Log::info('PayPal: Generating client token', [
             'url' => $url,
+            'domain' => $domain,
         ]);
 
-        $response = Http::withToken($accessToken)
-            ->withHeaders([
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-            ])
-            ->post($url, []);
+        // Use basic auth with client ID and secret
+        // Content-Type: application/x-www-form-urlencoded (handled by asForm())
+        $response = Http::asForm()
+            ->withBasicAuth($this->clientId, $this->clientSecret)
+            ->post($url, [
+                'grant_type' => 'client_credentials',
+                'response_type' => 'client_token',
+                'domains[]' => $domain, // Domain binding for security
+            ]);
 
         $responseData = $response->json();
 
@@ -122,22 +133,33 @@ class PayPalService
             Log::error('PayPal: Failed to generate client token', [
                 'status' => $response->status(),
                 'error' => $responseData,
+                'url' => $url,
+                'domain' => $domain,
             ]);
 
-            $errorMessage = $responseData['message'] 
-                ?? $responseData['error_description'] 
+            $errorMessage = $responseData['error_description'] 
+                ?? $responseData['error'] 
+                ?? $responseData['message'] 
                 ?? 'Unknown error';
             
             throw new \Exception('PayPal client token generation failed: ' . $errorMessage);
         }
 
-        $clientToken = $responseData['client_token'] ?? null;
+        // According to PayPal docs, the access_token in the response IS the client token
+        // Reference: https://docs.paypal.ai/developer/how-to/sdk/js/v6/configuration#get-client-token
+        $clientToken = $responseData['access_token'] ?? null;
         
         if (!$clientToken) {
-            throw new \Exception('PayPal client token generation failed: No token in response');
+            Log::error('PayPal: No access_token in response', [
+                'response' => $responseData,
+            ]);
+            throw new \Exception('PayPal client token generation failed: No access_token in response');
         }
 
-        Log::info('PayPal: Client token generated successfully');
+        Log::info('PayPal: Client token generated successfully', [
+            'token_length' => strlen($clientToken),
+            'expires_in' => $responseData['expires_in'] ?? null,
+        ]);
 
         return $clientToken;
     }
