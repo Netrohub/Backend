@@ -10,6 +10,7 @@ use App\Models\WithdrawalRequest;
 use App\Services\TapPaymentService;
 use App\Services\PaylinkClient;
 use App\Services\HyperPayService;
+use App\Services\PayPalService;
 use App\Services\PersonaService;
 use App\Services\PersonaKycHandler;
 use App\Helpers\MadaHelper;
@@ -26,6 +27,7 @@ class WebhookController extends Controller
         private TapPaymentService $tapService,
         private PaylinkClient $paylinkClient,
         private HyperPayService $hyperPayService,
+        private PayPalService $payPalService,
         private PersonaService $personaService,
         private PersonaKycHandler $kycHandler
     ) {}
@@ -652,6 +654,205 @@ class WebhookController extends Controller
             return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
         } catch (\Exception $e) {
             Log::error('HyperPay Webhook Error', [
+                'payload' => $payload,
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            ]);
+
+            return response()->json(['message' => 'Webhook processing error'], 500);
+        }
+    }
+
+    /**
+     * Handle PayPal webhook notifications
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function paypal(Request $request)
+    {
+        $payload = $request->all();
+        $eventType = $payload['event_type'] ?? null;
+        $resource = $payload['resource'] ?? null;
+        
+        Log::info('PayPal Webhook Received', [
+            'event_type' => $eventType,
+            'resource_id' => $resource['id'] ?? null,
+        ]);
+
+        // Verify webhook signature if configured
+        $headers = $request->headers->all();
+        $body = $request->getContent();
+        if (!$this->payPalService->verifyWebhookSignature($headers, $body)) {
+            Log::warning('PayPal Webhook: Invalid signature', [
+                'event_type' => $eventType,
+            ]);
+            return response()->json(['message' => 'Invalid webhook signature'], 401);
+        }
+
+        // Process different event types
+        try {
+            // Handle payment capture completed event
+            if ($eventType === 'PAYMENT.CAPTURE.COMPLETED' || $eventType === 'CHECKOUT.ORDER.APPROVED') {
+                $orderId = $resource['id'] ?? null;
+                
+                if (!$orderId) {
+                    Log::warning('PayPal Webhook: Missing order ID', ['payload' => $payload]);
+                    return response()->json(['message' => 'Missing order ID'], 400);
+                }
+
+                // Find payment by PayPal order ID
+                $payment = Payment::where('paypal_order_id', $orderId)->first();
+
+                if (!$payment) {
+                    Log::warning('PayPal Webhook: Payment not found', [
+                        'paypal_order_id' => $orderId,
+                    ]);
+                    return response()->json(['message' => 'Payment not found'], 404);
+                }
+
+                $order = $payment->order;
+
+                // Update payment record
+                $payment->paypal_response = array_merge($payment->paypal_response ?? [], $resource);
+                $payment->webhook_payload = $payload;
+
+                // Check if payment is successful
+                $status = $resource['status'] ?? null;
+                $isSuccessful = $status && $this->payPalService->isOrderSuccessful($status);
+
+                if ($isSuccessful) {
+                    // SECURITY: Check if payment already processed
+                    if ($payment->status === 'captured') {
+                        Log::warning('Duplicate PayPal webhook received - payment already processed', [
+                            'paypal_order_id' => $orderId,
+                            'order_id' => $order->id,
+                            'payment_id' => $payment->id,
+                        ]);
+                        return response()->json(['message' => 'Payment already processed'], 200);
+                    }
+
+                    // Only process if order is still in payment_intent status
+                    if ($order->status === 'payment_intent') {
+                        DB::transaction(function () use ($order, $payment, $resource) {
+                            // Reload with lock to prevent race conditions
+                            $order = Order::lockForUpdate()->find($order->id);
+                            
+                            if ($order->status !== 'payment_intent') {
+                                return; // Already processed
+                            }
+                            
+                            $payment = Payment::lockForUpdate()->find($payment->id);
+                            
+                            if ($payment->status === 'captured') {
+                                return; // Already processed
+                            }
+                            
+                            // Get buyer wallet with lock
+                            $buyerWallet = Wallet::lockForUpdate()
+                                ->firstOrCreate(
+                                    ['user_id' => $order->buyer_id],
+                                    ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                                );
+                            
+                            // Payment confirmed - credit escrow
+                            $buyerWallet->on_hold_balance += $order->amount;
+                            $buyerWallet->save();
+
+                            Log::info('PayPal Webhook: Buyer wallet updated', [
+                                'order_id' => $order->id,
+                                'buyer_id' => $order->buyer_id,
+                                'amount' => $order->amount,
+                                'wallet_after' => [
+                                    'available_balance' => $buyerWallet->available_balance,
+                                    'on_hold_balance' => $buyerWallet->on_hold_balance,
+                                ],
+                            ]);
+                            
+                            // Update order status
+                            $oldStatus = $order->status;
+                            $order->status = 'escrow_hold';
+                            $order->paid_at = now();
+                            $order->escrow_hold_at = now();
+                            $order->escrow_release_at = now()->addHours(12);
+                            $order->save();
+                            
+                            // Update payment status
+                            $payment->status = 'captured';
+                            $payment->captured_at = now();
+                            $payment->paypal_response = array_merge($payment->paypal_response ?? [], $resource);
+                            $payment->save();
+                            
+                            // Mark listing as sold
+                            $listing = $order->listing;
+                            $listingSold = false;
+                            if ($listing && $listing->status === 'active') {
+                                $listing->status = 'sold';
+                                $listing->save();
+                                $listingSold = true;
+                            }
+                            
+                            // Audit log
+                            AuditHelper::log(
+                                'order.payment_confirmed',
+                                Order::class,
+                                $order->id,
+                                ['status' => $oldStatus, 'note' => 'Payment intent - not yet a real order'],
+                                [
+                                    'status' => 'escrow_hold',
+                                    'paid_at' => $order->paid_at->toIso8601String(),
+                                    'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                                    'note' => 'Order confirmed - payment received via PayPal webhook',
+                                ],
+                                $request
+                            );
+                            
+                            // Send notifications
+                            $order->buyer->notify(new PaymentConfirmed($order));
+                            $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                            $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                            if ($listingSold && $listing) {
+                                $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                            }
+                            
+                            // Schedule escrow release job
+                            ReleaseEscrowFunds::dispatch($order->id)
+                                ->delay(now()->addHours(12));
+                        });
+                    } else {
+                        // Payment already processed, just update status
+                        $payment->status = 'captured';
+                        $payment->captured_at = $payment->captured_at ?? now();
+                        $payment->save();
+                    }
+                } elseif ($status && $this->payPalService->isOrderPending($status)) {
+                    // Payment pending
+                    $payment->status = 'initiated';
+                    $payment->save();
+                } else {
+                    // Payment failed
+                    $payment->status = 'failed';
+                    $payment->save();
+                }
+
+                Log::info('PayPal Webhook: Successfully processed', [
+                    'payment_id' => $payment->id,
+                    'order_id' => $order->id,
+                    'status' => $status,
+                    'payment_status' => $payment->status,
+                ]);
+
+                return response()->json(['message' => MessageHelper::WEBHOOK_PROCESSED]);
+            }
+
+            // Handle other event types (log but don't process)
+            Log::info('PayPal Webhook: Event type not processed', [
+                'event_type' => $eventType,
+            ]);
+
+            return response()->json(['message' => 'Event type not processed'], 200);
+        } catch (\Exception $e) {
+            Log::error('PayPal Webhook Error', [
                 'payload' => $payload,
                 'error' => $e->getMessage(),
                 'trace' => config('app.debug') ? $e->getTraceAsString() : null,

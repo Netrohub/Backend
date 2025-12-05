@@ -8,6 +8,7 @@ use App\Models\Payment;
 use App\Models\Wallet;
 use App\Services\PaylinkClient;
 use App\Services\HyperPayService;
+use App\Services\PayPalService;
 use App\Notifications\PaymentConfirmed;
 use App\Notifications\OrderStatusChanged;
 use App\Helpers\AuditHelper;
@@ -25,7 +26,8 @@ class PaymentController extends Controller
 
     public function __construct(
         private PaylinkClient $paylinkClient,
-        private HyperPayService $hyperPayService
+        private HyperPayService $hyperPayService,
+        private PayPalService $payPalService
     ) {}
 
     public function create(Request $request)
@@ -963,5 +965,376 @@ class PaymentController extends Controller
         
         // Fallback: return as-is with + prefix
         return '+' . $cleaned;
+    }
+
+    /**
+     * Create PayPal order
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function createPayPalOrder(Request $request)
+    {
+        $validated = $request->validate([
+            'order_id' => 'required|exists:orders,id',
+        ]);
+
+        $order = Order::with('listing')->findOrFail($validated['order_id']);
+
+        if ($order->buyer_id !== $request->user()->id) {
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+        }
+
+        // Only allow payment for payment_intent status
+        if ($order->status !== 'payment_intent') {
+            return response()->json([
+                'message' => 'لا يمكن الدفع لهذا الطلب. الطلب غير صالح أو تم الدفع مسبقاً.',
+                'error_code' => 'ORDER_NOT_PAYMENT_INTENT',
+            ], 400);
+        }
+
+        // SECURITY: Validate order amount matches current listing price
+        if ($order->listing && abs($order->amount - $order->listing->price) > 0.01) {
+            return response()->json([
+                'message' => 'Order amount does not match listing price. Please create a new order.',
+                'error_code' => 'ORDER_AMOUNT_MISMATCH',
+            ], 400);
+        }
+
+        // SECURITY: Check for existing payment to prevent duplicate payment attempts
+        $existingPayment = Payment::where('order_id', $order->id)
+            ->whereIn('status', ['initiated', 'authorized', 'captured'])
+            ->whereNotNull('paypal_order_id')
+            ->first();
+
+        if ($existingPayment && $existingPayment->paypal_order_id) {
+            // Return existing order info
+            return response()->json([
+                'message' => 'Payment already initiated for this order. You can continue with the existing payment.',
+                'payment' => $existingPayment,
+                'paypalOrderId' => $existingPayment->paypal_order_id,
+                'error_code' => 'PAYMENT_ALREADY_EXISTS',
+            ], 200);
+        }
+
+        // Build PayPal order payload
+        $returnUrl = config('app.frontend_url') . '/payments/paypal/callback?order_id=' . $order->id;
+        $cancelUrl = config('app.frontend_url') . '/checkout?order_id=' . $order->id . '&payment=cancelled';
+        
+        // Convert USD to appropriate currency for PayPal (PayPal supports USD)
+        $paypalOrderData = [
+            'intent' => 'CAPTURE',
+            'purchase_units' => [
+                [
+                    'reference_id' => 'NXO-' . $order->id,
+                    'description' => $order->listing->title ?? 'Account Purchase',
+                    'amount' => [
+                        'currency_code' => 'USD',
+                        'value' => number_format($order->amount, 2, '.', ''),
+                    ],
+                ],
+            ],
+            'application_context' => [
+                'brand_name' => config('app.name', 'NXOLand'),
+                'landing_page' => 'BILLING',
+                'user_action' => 'PAY_NOW',
+                'return_url' => $returnUrl,
+                'cancel_url' => $cancelUrl,
+            ],
+        ];
+
+        try {
+            $result = DB::transaction(function () use ($order, $paypalOrderData, $request) {
+                $paypalOrder = $this->payPalService->createOrder($paypalOrderData);
+
+                if (!isset($paypalOrder['id'])) {
+                    throw new \Exception('PayPal order creation failed: Invalid response');
+                }
+
+                // Create payment record
+                $payment = Payment::create([
+                    'order_id' => $order->id,
+                    'user_id' => $order->buyer_id,
+                    'paypal_order_id' => $paypalOrder['id'],
+                    'status' => 'initiated',
+                    'amount' => $order->amount,
+                    'currency' => 'USD',
+                    'paypal_response' => $paypalOrder,
+                ]);
+
+                return ['payment' => $payment, 'paypalOrder' => $paypalOrder];
+            });
+
+            $payment = $result['payment'];
+            $paypalOrder = $result['paypalOrder'];
+
+            Log::info('PayPal order created', [
+                'order_id' => $order->id,
+                'paypal_order_id' => $paypalOrder['id'],
+                'status' => $paypalOrder['status'] ?? null,
+            ]);
+
+            // Find approval URL from links
+            $approvalUrl = null;
+            foreach ($paypalOrder['links'] ?? [] as $link) {
+                if ($link['rel'] === 'approve') {
+                    $approvalUrl = $link['href'];
+                    break;
+                }
+            }
+
+            return response()->json([
+                'payment' => $payment,
+                'paypalOrderId' => $paypalOrder['id'],
+                'approvalUrl' => $approvalUrl,
+                'status' => $paypalOrder['status'] ?? null,
+            ]);
+        } catch (\Exception $e) {
+            $errorCode = 'PAYMENT_CREATE_FAILED';
+            $userMessage = MessageHelper::PAYMENT_CREATE_FAILED;
+            
+            if (str_contains($e->getMessage(), 'network') || str_contains($e->getMessage(), 'timeout')) {
+                $errorCode = 'PAYMENT_NETWORK_ERROR';
+                $userMessage = 'Unable to connect to payment gateway. Please try again.';
+            } elseif (str_contains($e->getMessage(), 'invalid') || str_contains($e->getMessage(), 'validation')) {
+                $errorCode = 'PAYMENT_INVALID_DATA';
+                $userMessage = 'Invalid payment data provided. Please check your information.';
+            }
+
+            Log::error('PayPal order creation failed', [
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+                'trace' => config('app.debug') ? $e->getTraceAsString() : null,
+            ]);
+
+            return response()->json([
+                'message' => $userMessage,
+                'error_code' => $errorCode,
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
+            ], 500);
+        }
+    }
+
+    /**
+     * Capture PayPal order
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function capturePayPalOrder(Request $request)
+    {
+        $validated = $request->validate([
+            'order_id' => 'required|exists:orders,id',
+            'paypal_order_id' => 'required|string',
+        ]);
+
+        $order = Order::findOrFail($validated['order_id']);
+
+        // SECURITY: Only order buyer can capture payment
+        if ($order->buyer_id !== $request->user()->id) {
+            return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
+        }
+
+        try {
+            $captureResponse = $this->payPalService->captureOrder($validated['paypal_order_id']);
+            
+            $status = $captureResponse['status'] ?? null;
+            $isSuccessful = $status && $this->payPalService->isOrderSuccessful($status);
+
+            if ($isSuccessful) {
+                // Process payment
+                $payment = Payment::where('order_id', $order->id)
+                    ->where('paypal_order_id', $validated['paypal_order_id'])
+                    ->first();
+                
+                if ($payment && $payment->status !== 'captured') {
+                    DB::transaction(function () use ($payment, $captureResponse, $order) {
+                        $payment->status = 'captured';
+                        $payment->captured_at = now();
+                        $payment->paypal_response = array_merge($payment->paypal_response ?? [], $captureResponse);
+                        $payment->save();
+
+                        // Update order status if still in payment_intent
+                        if ($order->status === 'payment_intent') {
+                            $buyerWallet = Wallet::lockForUpdate()
+                                ->firstOrCreate(
+                                    ['user_id' => $order->buyer_id],
+                                    ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                                );
+                            
+                            $buyerWallet->on_hold_balance += $order->amount;
+                            $buyerWallet->save();
+
+                            $oldStatus = $order->status;
+                            $order->status = 'escrow_hold';
+                            $order->paid_at = now();
+                            $order->escrow_hold_at = now();
+                            $order->escrow_release_at = now()->addHours(12);
+                            $order->save();
+
+                            // Mark listing as sold
+                            $listing = $order->listing;
+                            if ($listing && $listing->status === 'active') {
+                                $listing->status = 'sold';
+                                $listing->save();
+                            }
+
+                            // Send notifications
+                            $order->buyer->notify(new PaymentConfirmed($order));
+                            if ($listing) {
+                                $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                            }
+                            $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                            $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+
+                            // Schedule escrow release
+                            ReleaseEscrowFunds::dispatch($order->id)
+                                ->delay(now()->addHours(12));
+                        }
+                    });
+                }
+            }
+
+            return response()->json([
+                'status' => $isSuccessful ? 'success' : ($this->payPalService->isOrderPending($status) ? 'pending' : 'failed'),
+                'paypalOrderId' => $validated['paypal_order_id'],
+                'response' => $captureResponse,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('PayPal order capture failed', [
+                'order_id' => $order->id,
+                'paypal_order_id' => $validated['paypal_order_id'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to capture payment',
+                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e),
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle PayPal payment callback
+     * This is called when user returns from PayPal payment page
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function payPalCallback(Request $request)
+    {
+        $orderId = $request->query('order_id');
+        $token = $request->query('token');
+        $payerId = $request->query('PayerID');
+
+        if (!$orderId) {
+            Log::warning('PayPal callback: Missing order_id', ['query' => $request->query()]);
+            return redirect(config('app.frontend_url') . '/orders?error=invalid_callback');
+        }
+
+        $order = Order::withTrashed()->find($orderId);
+        if (!$order) {
+            Log::warning('PayPal callback: Order not found', ['order_id' => $orderId]);
+            return redirect(config('app.frontend_url') . '/orders?error=order_not_found');
+        }
+
+        if ($order->trashed()) {
+            Log::warning('PayPal callback: Order is soft-deleted', ['order_id' => $orderId]);
+            return redirect(config('app.frontend_url') . '/orders?error=order_deleted');
+        }
+
+        // Check if order is already paid
+        if ($order->status === 'escrow_hold' || $order->status === 'completed') {
+            return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+        }
+
+        // If token and PayerID are present, payment was approved
+        if ($token && $payerId) {
+            // Find payment by PayPal order ID (token is the order ID)
+            $payment = Payment::where('order_id', $orderId)
+                ->where('paypal_order_id', $token)
+                ->first();
+
+            if ($payment) {
+                // Try to capture the order
+                try {
+                    $captureResponse = $this->payPalService->captureOrder($token);
+                    $status = $captureResponse['status'] ?? null;
+                    
+                    if ($this->payPalService->isOrderSuccessful($status)) {
+                        // Process payment (same logic as capturePayPalOrder)
+                        if ($payment->status !== 'captured' && $order->status === 'payment_intent') {
+                            DB::transaction(function () use ($order, $payment, $captureResponse) {
+                                $order = Order::lockForUpdate()->find($order->id);
+                                if ($order->status !== 'payment_intent') {
+                                    return; // Already processed
+                                }
+                                
+                                $payment = Payment::lockForUpdate()->find($payment->id);
+                                if ($payment->status === 'captured') {
+                                    return; // Already processed
+                                }
+                                
+                                $buyerWallet = Wallet::lockForUpdate()
+                                    ->firstOrCreate(
+                                        ['user_id' => $order->buyer_id],
+                                        ['available_balance' => 0, 'on_hold_balance' => 0, 'withdrawn_total' => 0]
+                                    );
+                                
+                                $buyerWallet->on_hold_balance += $order->amount;
+                                $buyerWallet->save();
+
+                                $oldStatus = $order->status;
+                                $order->status = 'escrow_hold';
+                                $order->paid_at = now();
+                                $order->escrow_hold_at = now();
+                                $order->escrow_release_at = now()->addHours(12);
+                                $order->save();
+
+                                $payment->status = 'captured';
+                                $payment->captured_at = now();
+                                $payment->paypal_response = array_merge($payment->paypal_response ?? [], $captureResponse);
+                                $payment->save();
+
+                                $listing = $order->listing;
+                                if ($listing && $listing->status === 'active') {
+                                    $listing->status = 'sold';
+                                    $listing->save();
+                                }
+
+                                $order->buyer->notify(new PaymentConfirmed($order));
+                                if ($listing) {
+                                    $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
+                                }
+                                $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+                                $order->seller->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
+
+                                ReleaseEscrowFunds::dispatch($order->id)
+                                    ->delay(now()->addHours(12));
+                            });
+                        }
+                        
+                        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                    } else {
+                        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=failed');
+                    }
+                } catch (\Exception $e) {
+                    Log::error('PayPal callback: Failed to capture order', [
+                        'order_id' => $orderId,
+                        'token' => $token,
+                        'error' => $e->getMessage(),
+                    ]);
+                    return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=error');
+                }
+            }
+        }
+
+        // Check if payment was cancelled
+        if ($request->query('cancel') === 'true' || !$token) {
+            return redirect(config('app.frontend_url') . '/checkout?order_id=' . $orderId . '&payment=cancelled');
+        }
+
+        // Redirect to order page - user can check status
+        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=processing');
     }
 }
