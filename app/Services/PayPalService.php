@@ -238,11 +238,44 @@ class PayPalService
     /**
      * Capture a PayPal order
      * 
+     * According to PayPal Orders v2 API documentation:
+     * https://developer.paypal.com/docs/api/orders/v2/#orders_capture
+     * 
      * @param string $orderId PayPal order ID
      * @return array Capture response
      */
     public function captureOrder(string $orderId): array
     {
+        // First, check the order status to see if it's already captured
+        try {
+            $orderDetails = $this->getOrder($orderId);
+            $orderStatus = $orderDetails['status'] ?? null;
+            
+            Log::info('PayPal: Order status before capture', [
+                'order_id' => $orderId,
+                'status' => $orderStatus,
+            ]);
+            
+            // If order is already completed, return the order details
+            if ($orderStatus === 'COMPLETED') {
+                Log::info('PayPal: Order already completed', [
+                    'order_id' => $orderId,
+                ]);
+                return $orderDetails;
+            }
+            
+            // If order is not in a capturable state, throw an error
+            if (!in_array($orderStatus, ['APPROVED', 'CREATED'])) {
+                throw new \Exception("Order is in status '{$orderStatus}' and cannot be captured. Order must be in 'APPROVED' or 'CREATED' status.");
+            }
+        } catch (\Exception $e) {
+            // If getOrder fails, log but continue with capture attempt
+            Log::warning('PayPal: Could not check order status before capture', [
+                'order_id' => $orderId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+        
         $url = rtrim($this->baseUrl, '/') . '/v2/checkout/orders/' . $orderId . '/capture';
         $accessToken = $this->getAccessToken();
 
@@ -251,13 +284,14 @@ class PayPalService
             'order_id' => $orderId,
         ]);
 
+        // According to PayPal docs, capture endpoint requires empty JSON body: {}
         $response = Http::withToken($accessToken)
             ->withHeaders([
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Prefer' => 'return=representation',
             ])
-            ->post($url);
+            ->post($url, []); // Explicitly send empty JSON object
 
         $responseData = $response->json();
 

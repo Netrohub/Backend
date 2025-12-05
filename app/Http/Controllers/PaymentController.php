@@ -1048,7 +1048,8 @@ class PaymentController extends Controller
             ], 200);
         }
 
-        // Build PayPal order payload
+        // Build PayPal order payload using Orders v2 API
+        // Reference: https://developer.paypal.com/docs/api/orders/v2/
         $returnUrl = config('app.frontend_url') . '/payments/paypal/callback?order_id=' . $order->id;
         $cancelUrl = config('app.frontend_url') . '/checkout?order_id=' . $order->id . '&payment=cancelled';
         
@@ -1065,12 +1066,19 @@ class PaymentController extends Controller
                     ],
                 ],
             ],
-            'application_context' => [
-                'brand_name' => config('app.name', 'NXOLand'),
-                'landing_page' => 'BILLING', // BILLING enables guest checkout (card payment without PayPal account)
-                'user_action' => 'PAY_NOW',
-                'return_url' => $returnUrl,
-                'cancel_url' => $cancelUrl,
+            'payment_source' => [
+                'paypal' => [
+                    'experience_context' => [
+                        'payment_method_preference' => 'IMMEDIATE_PAYMENT_REQUIRED',
+                        'brand_name' => config('app.name', 'NXOLand'),
+                        'locale' => 'en-US',
+                        'landing_page' => 'BILLING', // BILLING enables guest checkout (card payment without PayPal account)
+                        'shipping_preference' => 'NO_SHIPPING', // Digital goods - no shipping
+                        'user_action' => 'PAY_NOW', // Complete payment immediately
+                        'return_url' => $returnUrl,
+                        'cancel_url' => $cancelUrl,
+                    ],
+                ],
             ],
         ];
 
@@ -1106,9 +1114,10 @@ class PaymentController extends Controller
             ]);
 
             // Find approval URL from links
+            // With payment_source, the link rel is 'payer-action' instead of 'approve'
             $approvalUrl = null;
             foreach ($paypalOrder['links'] ?? [] as $link) {
-                if ($link['rel'] === 'approve') {
+                if ($link['rel'] === 'payer-action' || $link['rel'] === 'approve') {
                     $approvalUrl = $link['href'];
                     break;
                 }
@@ -1307,7 +1316,8 @@ class PaymentController extends Controller
 
     /**
      * Handle PayPal payment callback
-     * This is called when user returns from PayPal payment page
+     * This is called when user returns from PayPal payment page after approval
+     * Reference: https://developer.paypal.com/docs/api/orders/v2/
      * 
      * @param Request $request
      * @return \Illuminate\Http\RedirectResponse
@@ -1315,12 +1325,17 @@ class PaymentController extends Controller
     public function payPalCallback(Request $request)
     {
         $orderId = $request->query('order_id');
-        $token = $request->query('token');
-        $payerId = $request->query('PayerID');
+        $token = $request->query('token'); // PayPal order ID (token parameter)
 
         if (!$orderId) {
             Log::warning('PayPal callback: Missing order_id', ['query' => $request->query()]);
             return redirect(config('app.frontend_url') . '/orders?error=invalid_callback');
+        }
+
+        // Check if user cancelled
+        if ($request->query('cancel') === 'true' || $request->has('cancel')) {
+            Log::info('PayPal callback: User cancelled payment', ['order_id' => $orderId]);
+            return redirect(config('app.frontend_url') . '/checkout?order_id=' . $orderId . '&payment=cancelled');
         }
 
         $order = Order::withTrashed()->find($orderId);
@@ -1339,17 +1354,27 @@ class PaymentController extends Controller
             return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
         }
 
-        // If token and PayerID are present, payment was approved
-        if ($token && $payerId) {
-            // Find payment by PayPal order ID (token is the order ID)
+        // With Orders v2 API, token is the PayPal order ID
+        // Find payment by PayPal order ID
+        $paypalOrderId = $token;
+        if (!$paypalOrderId) {
+            // Try to get from payment record if token not in URL
             $payment = Payment::where('order_id', $orderId)
-                ->where('paypal_order_id', $token)
+                ->whereNotNull('paypal_order_id')
+                ->first();
+            $paypalOrderId = $payment->paypal_order_id ?? null;
+        }
+
+        if ($paypalOrderId) {
+            // Find payment by PayPal order ID
+            $payment = Payment::where('order_id', $orderId)
+                ->where('paypal_order_id', $paypalOrderId)
                 ->first();
 
             if ($payment) {
                 // Try to capture the order
                 try {
-                    $captureResponse = $this->payPalService->captureOrder($token);
+                    $captureResponse = $this->payPalService->captureOrder($paypalOrderId);
                     $status = $captureResponse['status'] ?? null;
                     
                     if ($this->payPalService->isOrderSuccessful($status)) {
