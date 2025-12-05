@@ -1048,13 +1048,9 @@ class PaymentController extends Controller
             ], 200);
         }
 
-        // Build PayPal order payload using Orders v2 API
-        // Reference: https://developer.paypal.com/docs/api/orders/v2/
-        // Return URL must point to backend (where the callback route is defined)
-        $returnUrl = config('app.url') . '/payments/paypal/callback?order_id=' . $order->id;
-        $cancelUrl = config('app.frontend_url') . '/checkout?order_id=' . $order->id . '&payment=cancelled';
-        
-        // Convert USD to appropriate currency for PayPal (PayPal supports USD)
+        // Build PayPal order payload for Expanded Checkout
+        // Reference: https://developer.paypal.com/studio/checkout/advanced/getstarted
+        // For Expanded Checkout, we don't need payment_source - the SDK handles it
         $paypalOrderData = [
             'intent' => 'CAPTURE',
             'purchase_units' => [
@@ -1067,20 +1063,8 @@ class PaymentController extends Controller
                     ],
                 ],
             ],
-            'payment_source' => [
-                'paypal' => [
-                    'experience_context' => [
-                        'payment_method_preference' => 'IMMEDIATE_PAYMENT_REQUIRED',
-                        'brand_name' => config('app.name', 'NXOLand'),
-                        'locale' => 'en-US',
-                        'landing_page' => 'BILLING', // BILLING enables guest checkout (card payment without PayPal account)
-                        'shipping_preference' => 'NO_SHIPPING', // Digital goods - no shipping
-                        'user_action' => 'PAY_NOW', // Complete payment immediately
-                        'return_url' => $returnUrl,
-                        'cancel_url' => $cancelUrl,
-                    ],
-                ],
-            ],
+            // No payment_source needed for Expanded Checkout - SDK handles payment methods
+            // No application_context needed - SDK handles the flow
         ];
 
         try {
@@ -1114,20 +1098,12 @@ class PaymentController extends Controller
                 'status' => $paypalOrder['status'] ?? null,
             ]);
 
-            // Find approval URL from links
-            // With payment_source, the link rel is 'payer-action' instead of 'approve'
-            $approvalUrl = null;
-            foreach ($paypalOrder['links'] ?? [] as $link) {
-                if ($link['rel'] === 'payer-action' || $link['rel'] === 'approve') {
-                    $approvalUrl = $link['href'];
-                    break;
-                }
-            }
-
+            // For Expanded Checkout, we don't need approval URL
+            // The SDK handles the payment flow on the frontend
+            // Just return the order ID for the SDK to use
             return response()->json([
                 'payment' => $payment,
                 'paypalOrderId' => $paypalOrder['id'],
-                'approvalUrl' => $approvalUrl,
                 'status' => $paypalOrder['status'] ?? null,
             ]);
         } catch (\Exception $e) {
@@ -1373,6 +1349,43 @@ class PaymentController extends Controller
                 ->first();
 
             if ($payment) {
+                // Check order status first to see if it's already approved
+                try {
+                    $orderDetails = $this->payPalService->getOrder($paypalOrderId);
+                    $orderStatus = $orderDetails['status'] ?? null;
+                    
+                    Log::info('PayPal callback: Order status before capture', [
+                        'order_id' => $orderId,
+                        'paypal_order_id' => $paypalOrderId,
+                        'status' => $orderStatus,
+                    ]);
+                    
+                    // If order is already completed, redirect to success
+                    if ($orderStatus === 'COMPLETED') {
+                        Log::info('PayPal callback: Order already completed', [
+                            'order_id' => $orderId,
+                            'paypal_order_id' => $paypalOrderId,
+                        ]);
+                        return redirect(config('app.frontend_url') . '/order/' . $orderId . '?payment=success');
+                    }
+                    
+                    // Order must be APPROVED to capture (after buyer approval)
+                    if ($orderStatus !== 'APPROVED') {
+                        Log::warning('PayPal callback: Order not in APPROVED status', [
+                            'order_id' => $orderId,
+                            'paypal_order_id' => $paypalOrderId,
+                            'status' => $orderStatus,
+                        ]);
+                        // Still try to capture - PayPal will return proper error if not capturable
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('PayPal callback: Could not get order status', [
+                        'order_id' => $orderId,
+                        'paypal_order_id' => $paypalOrderId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+                
                 // Try to capture the order
                 try {
                     $captureResponse = $this->payPalService->captureOrder($paypalOrderId);

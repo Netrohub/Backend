@@ -264,9 +264,15 @@ class PayPalService
                 return $orderDetails;
             }
             
-            // If order is not in a capturable state, throw an error
-            if (!in_array($orderStatus, ['APPROVED', 'CREATED'])) {
-                throw new \Exception("Order is in status '{$orderStatus}' and cannot be captured. Order must be in 'APPROVED' or 'CREATED' status.");
+            // With payment_source flow, order can be in PAYER_ACTION_REQUIRED after creation
+            // After buyer approval, it should be APPROVED
+            // Allow capture for APPROVED, CREATED, and PAYER_ACTION_REQUIRED (if buyer already approved)
+            if (!in_array($orderStatus, ['APPROVED', 'CREATED', 'PAYER_ACTION_REQUIRED'])) {
+                Log::warning('PayPal: Order not in capturable state', [
+                    'order_id' => $orderId,
+                    'status' => $orderStatus,
+                ]);
+                // Don't throw - try to capture anyway, PayPal will return proper error if not capturable
             }
         } catch (\Exception $e) {
             // If getOrder fails, log but continue with capture attempt
@@ -285,13 +291,15 @@ class PayPalService
         ]);
 
         // According to PayPal docs, capture endpoint requires empty JSON body: {}
+        // Send empty JSON object as string to ensure proper format
         $response = Http::withToken($accessToken)
             ->withHeaders([
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
                 'Prefer' => 'return=representation',
             ])
-            ->post($url, []); // Explicitly send empty JSON object
+            ->withBody('{}', 'application/json')
+            ->post($url);
 
         $responseData = $response->json();
 
