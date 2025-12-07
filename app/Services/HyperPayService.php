@@ -34,8 +34,9 @@ class HyperPayService
         }
         
         // Assign after validation (ensures non-null values)
-        $this->baseUrl = $baseUrl;
-        $this->entityId = $entityId;
+        // Remove trailing slash from base URL to prevent double slashes in API calls
+        $this->baseUrl = rtrim($baseUrl, '/');
+        $this->entityId = trim($entityId); // Remove any whitespace
         $this->accessToken = trim($accessToken); // Remove any whitespace
         $this->environment = $environment;
         
@@ -82,6 +83,11 @@ class HyperPayService
         // Add integrity=true for PCI DSS v4.0 compliance
         $data['integrity'] = 'true';
         
+        // IMPORTANT: For COPYandPAY, entityId is ONLY used in Basic Auth, NOT as a form parameter
+        // Do NOT include entityId in form data - it goes only in the Authorization header
+        // Removing entityId from data if it was accidentally included
+        unset($data['entityId']);
+        
         Log::info('HyperPay: Preparing checkout', [
             'url' => $url,
             'entity_id' => $entityId,
@@ -90,10 +96,15 @@ class HyperPayService
             'currency' => $data['currency'] ?? null,
             'integrity' => true,
             'access_token_length' => strlen($this->accessToken),
+            'auth_method' => 'Basic Auth (entityId in header only)',
         ]);
 
         // Make HTTP request with Basic Auth
-        // HyperPay uses entityId as username and accessToken as password
+        // HyperPay COPYandPAY uses Basic Authentication:
+        // - Username: Entity ID
+        // - Password: Access Token
+        // - Content-Type: application/x-www-form-urlencoded
+        // - entityId is NOT sent as a form parameter, only in Authorization header
         $response = Http::withBasicAuth($entityId, $this->accessToken)
             ->asForm()
             ->post($url, $data);
