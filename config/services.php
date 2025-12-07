@@ -101,12 +101,4 @@ return [
         'webhook_secret' => env('HYPERPAY_WEBHOOK_SECRET'),
     ],
 
-    'paypal' => [
-        'base_url' => env('PAYPAL_BASE_URL'), // Auto-set based on environment if not provided
-        'client_id' => env('PAYPAL_CLIENT_ID'),
-        'client_secret' => env('PAYPAL_CLIENT_SECRET'),
-        'environment' => env('PAYPAL_ENVIRONMENT', 'sandbox'), // 'sandbox' or 'live'
-        'webhook_id' => env('PAYPAL_WEBHOOK_ID'), // Webhook ID for signature verification
-    ],
-
 ];

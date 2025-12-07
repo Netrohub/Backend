@@ -110,6 +110,11 @@ class HyperPayService
                 'error_description' => $errorDescription,
                 'error' => $responseData,
                 'entity_id_used' => $entityId,
+                'entity_id_length' => strlen($entityId),
+                'access_token_length' => strlen($this->accessToken),
+                'access_token_starts_with' => substr($this->accessToken, 0, 10) . '...',
+                'base_url' => $this->baseUrl,
+                'environment' => $this->environment,
                 'url' => $url,
                 'request_data_keys' => array_keys($data), // Log keys only, not values
             ]);
@@ -117,9 +122,11 @@ class HyperPayService
             // Provide more specific error message for authentication errors
             if ($errorCode === '800.900.300' || $response->status() === 401) {
                 $errorMessage = 'HyperPay authentication failed. Please verify: '
-                    . '1) HYPERPAY_ENTITY_ID matches the entity ID in your HyperPay dashboard, '
-                    . '2) HYPERPAY_ACCESS_TOKEN is correct and matches this entity ID, '
-                    . '3) You are using the correct environment (test vs production). '
+                    . '1) HYPERPAY_ENTITY_ID (' . $entityId . ') matches the entity ID in your HyperPay dashboard, '
+                    . '2) HYPERPAY_ACCESS_TOKEN is correct and matches this entity ID (token length: ' . strlen($this->accessToken) . '), '
+                    . '3) You are using the correct environment (' . $this->environment . ' - base URL: ' . $this->baseUrl . '), '
+                    . '4) The access token has not expired (HyperPay tokens can expire), '
+                    . '5) There are no extra spaces or newlines in your .env file values. '
                     . 'Error: ' . $errorDescription;
             } else {
                 $errorMessage = $errorDescription;

@@ -25,6 +25,3 @@ Route::get('/payments/paylink/callback', [PaymentController::class, 'callback'])
 Route::get('/payments/hyperpay/callback', [PaymentController::class, 'hyperPayCallback'])
     ->name('payments.hyperpay.callback');
 
-// PayPal payment callback (public route - no auth required)
-Route::get('/payments/paypal/callback', [PaymentController::class, 'payPalCallback'])
-    ->name('payments.paypal.callback');
