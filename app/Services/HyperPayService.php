@@ -333,5 +333,57 @@ class HyperPayService
             'integrity' => null, // Should be fetched from HyperPay API or configured
         ];
     }
+
+    /**
+     * Verify credentials by making a simple API call
+     * This can be used to test if Entity ID and Access Token are correct
+     * 
+     * @return array Verification result
+     */
+    public function verifyCredentials(): array
+    {
+        $url = rtrim($this->baseUrl, '/') . '/v1/checkouts';
+        
+        // Make a minimal request to test authentication
+        // Using a very small amount for testing
+        $testData = [
+            'amount' => '0.01',
+            'currency' => 'SAR',
+            'paymentType' => 'DB',
+            'merchantTransactionId' => 'TEST-' . time(),
+        ];
+        
+        try {
+            $response = Http::withBasicAuth($this->entityId, $this->accessToken)
+                ->asForm()
+                ->post($url, $testData);
+            
+            $responseData = $response->json();
+            
+            if ($response->successful()) {
+                return [
+                    'valid' => true,
+                    'message' => 'Credentials are valid',
+                    'checkout_id' => $responseData['id'] ?? null,
+                ];
+            } else {
+                $errorCode = $responseData['result']['code'] ?? null;
+                $errorDescription = $responseData['result']['description'] ?? 'Unknown error';
+                
+                return [
+                    'valid' => false,
+                    'message' => 'Credentials are invalid',
+                    'error_code' => $errorCode,
+                    'error_description' => $errorDescription,
+                    'status' => $response->status(),
+                ];
+            }
+        } catch (\Exception $e) {
+            return [
+                'valid' => false,
+                'message' => 'Failed to verify credentials: ' . $e->getMessage(),
+            ];
+        }
+    }
 }
 
