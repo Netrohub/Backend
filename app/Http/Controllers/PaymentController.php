@@ -15,6 +15,7 @@ use App\Helpers\MadaHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use App\Http\Controllers\MessageHelper;
 
 class PaymentController extends Controller
@@ -399,6 +400,9 @@ class PaymentController extends Controller
                                         $listing->status = 'sold';
                                         $listing->save();
                                         $listingSold = true;
+                                        
+                                        // Invalidate listings cache for real-time updates
+                                        $this->invalidateListingCache($listing->category);
                                     }
                                     
                                     // Audit log
@@ -864,10 +868,14 @@ class PaymentController extends Controller
                                 $listing->save();
                                 $listingSold = true;
                                 
+                                // Invalidate listings cache for real-time updates
+                                $this->invalidateListingCache($listing->category);
+                                
                                 Log::info('HyperPay: Listing marked as sold', [
                                     'order_id' => $order->id,
                                     'listing_id' => $listing->id,
                                     'listing_status' => $listing->status,
+                                    'category' => $listing->category,
                                 ]);
                             } else {
                                 Log::warning('HyperPay: Could not mark listing as sold', [
@@ -1063,4 +1071,32 @@ class PaymentController extends Controller
         return '+' . $cleaned;
     }
 
+    /**
+     * Invalidate listings cache for a specific category and all listings
+     * This ensures real-time updates when listings are marked as sold
+     */
+    private function invalidateListingCache(?string $category = null): void
+    {
+        // Invalidate cache for specific category
+        if ($category) {
+            Cache::forget('listings_' . md5($category . ''));
+        }
+        
+        // Also invalidate "all listings" cache (no category)
+        Cache::forget('listings_' . md5(''));
+        
+        // Invalidate cache for all categories to ensure consistency
+        // This is safe because cache is only used for first page without search
+        try {
+            $categories = \App\Helpers\ListingCategories::all();
+            foreach ($categories as $cat) {
+                Cache::forget('listings_' . md5($cat . ''));
+            }
+        } catch (\Exception $e) {
+            // If categories helper fails, just log and continue
+            Log::warning('Failed to invalidate all category caches', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
 }

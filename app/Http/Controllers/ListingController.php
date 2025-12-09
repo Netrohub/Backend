@@ -90,11 +90,11 @@ class ListingController extends Controller
             return $paginator->toArray();
         };
 
-        // Cache paginated results for 10 minutes
+        // Cache paginated results for 2 minutes (reduced from 10 for faster updates)
         // Note: Only cache first page with no search to avoid cache bloat
         // Order: Active listings first (by newest), then sold listings (by newest)
         if ($page === 1 && !$request->has('search')) {
-            $listings = Cache::remember($cacheKey, 600, function () use ($query, $request, $transformPaginated) {
+            $listings = Cache::remember($cacheKey, 120, function () use ($query, $request, $transformPaginated) {
                 $paginator = PaginationHelper::paginate(
                     $query->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
                           ->orderBy('created_at', 'desc'), 
