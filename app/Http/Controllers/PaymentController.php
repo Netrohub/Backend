@@ -597,16 +597,13 @@ class PaymentController extends Controller
             'customer.phone' => $customerPhone,
             'customer.ip' => $customerIP,
             
-            // Billing address (required for 3DS - using defaults for Saudi Arabia)
-            'billing.street1' => 'Not Provided', // Required field - default value
-            'billing.city' => 'Riyadh', // Required field - default to capital
-            'billing.postcode' => '11564', // Required field - default Riyadh postcode
-            'billing.country' => 'SA', // Required field - Saudi Arabia (Alpha-2 code)
-            'billing.state' => 'Riyadh', // Required field - default to Riyadh province
-            
-            // NOTE: Browser data is NOT sent here for COPYandPAY widget
-            // The COPYandPAY widget automatically collects and sends browser data when the form is submitted
-            // Sending it during checkout preparation causes "was already set and cannot be overwritten" errors
+            // NOTE: Billing address and browser data are NOT sent here for COPYandPAY widget
+            // The COPYandPAY widget automatically collects and sends:
+            // - Browser data (acceptHeader, language, screenHeight, screenWidth, timezone, userAgent, javaEnabled, javascriptEnabled, screenColorDepth, challengeWindow)
+            // - Billing address (if required by the payment method)
+            // - shopperResultUrl (from checkout creation)
+            // Sending these during checkout preparation causes "was already set and cannot be overwritten" errors
+            // For COPYandPAY widget, only send: amount, currency, paymentType, merchantTransactionId, shopperResultUrl, customer info, and customParameters
         ];
         
         // Calculate account age and purchase history for better frictionless flow
