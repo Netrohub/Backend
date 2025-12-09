@@ -439,7 +439,17 @@ class WebhookController extends Controller
                 $payment->status = 'captured';
                 $payment->captured_at = now();
             } elseif ($orderStatus === 'Canceled' || $orderStatus === 'Failed') {
+                // Payment failed - store failure reason
+                $failureReason = $invoice['message'] ?? $invoice['detail'] ?? 'Payment failed or cancelled';
                 $payment->status = 'failed';
+                $payment->failure_reason = $failureReason;
+                
+                Log::info('Paylink Webhook: Payment marked as failed', [
+                    'payment_id' => $payment->id,
+                    'order_id' => $order->id,
+                    'failure_reason' => $failureReason,
+                    'order_status' => $orderStatus,
+                ]);
             } elseif ($orderStatus === 'Pending') {
                 $payment->status = 'initiated';
             }
@@ -644,9 +654,18 @@ class WebhookController extends Controller
                 $payment->status = 'initiated';
                 $payment->save();
             } else {
-                // Payment failed
+                // Payment failed - store failure reason
+                $resultDescription = $payload['result']['description'] ?? 'Payment failed';
                 $payment->status = 'failed';
+                $payment->failure_reason = $resultDescription;
                 $payment->save();
+                
+                Log::info('HyperPay Webhook: Payment marked as failed', [
+                    'payment_id' => $payment->id,
+                    'order_id' => $order->id,
+                    'failure_reason' => $resultDescription,
+                    'result_code' => $resultCode,
+                ]);
             }
 
             Log::info('HyperPay Webhook: Successfully processed', [
@@ -685,7 +704,7 @@ class WebhookController extends Controller
         // Invalidate cache for all categories to ensure consistency
         // This is safe because cache is only used for first page without search
         try {
-            $categories = \App\Helpers\ListingCategories::all();
+            $categories = \App\Constants\ListingCategories::all();
             foreach ($categories as $cat) {
                 Cache::forget('listings_' . md5($cat . ''));
             }

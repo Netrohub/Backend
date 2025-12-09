@@ -26,6 +26,7 @@ class Payment extends Model
         'paypal_response',
         'webhook_payload',
         'captured_at',
+        'failure_reason',
     ];
 
     protected function casts(): array

@@ -918,6 +918,27 @@ class PaymentController extends Controller
                 }
             }
 
+            // Update payment record if failed
+            if (!$isSuccessful) {
+                $payment = Payment::where('order_id', $order->id)
+                    ->whereNotNull('hyperpay_checkout_id')
+                    ->first();
+                
+                if ($payment) {
+                    $payment->status = 'failed';
+                    $payment->failure_reason = $resultDescription;
+                    $payment->hyperpay_response = array_merge($payment->hyperpay_response ?? [], $statusResponse);
+                    $payment->save();
+                    
+                    Log::info('HyperPay: Payment marked as failed', [
+                        'order_id' => $order->id,
+                        'payment_id' => $payment->id,
+                        'failure_reason' => $resultDescription,
+                        'result_code' => $resultCode,
+                    ]);
+                }
+            }
+            
             // Only return success or failed - no pending for immediate payment methods
             $finalStatus = $isSuccessful ? 'success' : 'failed';
             
@@ -1088,7 +1109,7 @@ class PaymentController extends Controller
         // Invalidate cache for all categories to ensure consistency
         // This is safe because cache is only used for first page without search
         try {
-            $categories = \App\Helpers\ListingCategories::all();
+            $categories = \App\Constants\ListingCategories::all();
             foreach ($categories as $cat) {
                 Cache::forget('listings_' . md5($cat . ''));
             }
