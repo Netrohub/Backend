@@ -351,6 +351,25 @@ class HyperPayService
     }
 
     /**
+     * Check if result code indicates resource not found or invalid parameter
+     * This can happen when checking payment status before payment is completed
+     * 
+     * @param string $resultCode Result code from HyperPay
+     * @return bool True if resource not found or invalid parameter
+     */
+    public function isResourceNotFound(string $resultCode): bool
+    {
+        // 200.300.404 - Resource not found / Invalid or missing parameter
+        // This can occur when checking payment status before payment is completed
+        $notFoundCodes = [
+            '200.300.404',
+            '200.300.400',
+        ];
+        
+        return in_array($resultCode, $notFoundCodes) || str_starts_with($resultCode, '200.300.404');
+    }
+
+    /**
      * Get widget script URL with integrity hash
      * 
      * @param string $checkoutId Checkout ID
