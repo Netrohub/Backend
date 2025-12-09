@@ -611,8 +611,9 @@ class PaymentController extends Controller
             'customer.browser.screenWidth' => (string)($browserData['screenWidth'] ?? 1920),
             'customer.browser.timezone' => (string)($browserData['timezone'] ?? 0),
             'customer.browser.userAgent' => $browserData['userAgent'] ?? ($request->header('User-Agent') ?? 'Mozilla/5.0'),
-            'customer.browser.javaEnabled' => $browserData['javaEnabled'] ?? false ? 'true' : 'false',
-            'customer.browser.javascriptEnabled' => $browserData['javascriptEnabled'] ?? true ? 'true' : 'false',
+            // CRITICAL: Send boolean values, not strings (HyperPay expects true/false, not 'true'/'false')
+            'customer.browser.javaEnabled' => filter_var($browserData['javaEnabled'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            'customer.browser.javascriptEnabled' => filter_var($browserData['javascriptEnabled'] ?? true, FILTER_VALIDATE_BOOLEAN),
         ];
         
         // Optional browser fields (recommended for better frictionless flow)
@@ -622,6 +623,63 @@ class PaymentController extends Controller
         if (isset($browserData['challengeWindow'])) {
             $checkoutData['customer.browser.challengeWindow'] = $browserData['challengeWindow'];
         }
+        
+        // Calculate account age and purchase history for better frictionless flow
+        $accountCreatedAt = $user->created_at;
+        $accountAgeDays = $accountCreatedAt ? now()->diffInDays($accountCreatedAt) : 0;
+        
+        // Determine account age indicator
+        $accountAgeIndicator = '01'; // No account (guest check-out) - default
+        if ($accountAgeDays > 60) {
+            $accountAgeIndicator = '05'; // More than 60 days
+        } elseif ($accountAgeDays >= 30) {
+            $accountAgeIndicator = '04'; // 30-60 days
+        } elseif ($accountAgeDays > 0) {
+            $accountAgeIndicator = '03'; // Less than 30 days
+        } elseif ($accountCreatedAt && $accountCreatedAt->isToday()) {
+            $accountAgeIndicator = '02'; // Created during this transaction
+        }
+        
+        // Calculate purchase history
+        $completedOrders = Order::where('buyer_id', $user->id)
+            ->where('status', 'completed')
+            ->get();
+        
+        $purchaseCountLast6Months = $completedOrders
+            ->filter(fn($order) => $order->created_at->isAfter(now()->subMonths(6)))
+            ->count();
+        
+        $transactionsLast24Hours = Order::where('buyer_id', $user->id)
+            ->where('created_at', '>=', now()->subDay())
+            ->count();
+        
+        $transactionsLastYear = Order::where('buyer_id', $user->id)
+            ->where('created_at', '>=', now()->subYear())
+            ->count();
+        
+        // Determine authentication method (user is logged in, so they authenticated)
+        // 02 = Login using own credentials (most common)
+        $reqAuthMethod = '02';
+        
+        // Add recommended customParameters for better frictionless flow
+        $checkoutData['customParameters[AccountAgeIndicator]'] = $accountAgeIndicator;
+        if ($accountCreatedAt) {
+            $checkoutData['customParameters[AccountDate]'] = $accountCreatedAt->format('Ymd');
+        }
+        $checkoutData['customParameters[AccountPurchaseCount]'] = (string)$purchaseCountLast6Months;
+        $checkoutData['customParameters[AccountDayTransactions]'] = (string)$transactionsLast24Hours;
+        $checkoutData['customParameters[AccountYearTransactions]'] = (string)$transactionsLastYear;
+        $checkoutData['customParameters[ReqAuthMethod]'] = $reqAuthMethod;
+        $checkoutData['customParameters[ReqAuthTimestamp]'] = now()->format('YmdHi'); // YYYYMMDDHHMM format
+        
+        // Transaction type: 01 = Goods/Service Purchase
+        $checkoutData['customParameters[TransactionType]'] = '01';
+        
+        // Delivery timeframe: 01 = Electronic Delivery (digital goods)
+        $checkoutData['customParameters[DeliveryTimeframe]'] = '01';
+        
+        // Shipping indicator: 05 = Digital goods
+        $checkoutData['customParameters[ShipIndicator]'] = '05';
         
         // Add test mode parameters for test environment only
         $environment = config('services.hyperpay.environment', 'test');
