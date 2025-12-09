@@ -822,6 +822,17 @@ class PaymentController extends Controller
                 
                 if ($payment && $payment->status !== 'captured') {
                     DB::transaction(function () use ($payment, $statusResponse, $order) {
+                        // Reload order with lock to prevent race conditions
+                        $order = Order::lockForUpdate()->with('listing')->find($order->id);
+                        
+                        // Reload payment with lock
+                        $payment = Payment::lockForUpdate()->find($payment->id);
+                        
+                        // Double-check payment status after lock
+                        if ($payment->status === 'captured') {
+                            return; // Already processed
+                        }
+                        
                         $payment->status = 'captured';
                         $payment->captured_at = now();
                         $payment->hyperpay_response = array_merge($payment->hyperpay_response ?? [], $statusResponse);
@@ -845,16 +856,47 @@ class PaymentController extends Controller
                             $order->escrow_release_at = now()->addHours(12);
                             $order->save();
 
-                            // Mark listing as sold
+                            // CRITICAL: Mark listing as sold - must happen after order status update
                             $listing = $order->listing;
+                            $listingSold = false;
                             if ($listing && $listing->status === 'active') {
                                 $listing->status = 'sold';
                                 $listing->save();
+                                $listingSold = true;
+                                
+                                Log::info('HyperPay: Listing marked as sold', [
+                                    'order_id' => $order->id,
+                                    'listing_id' => $listing->id,
+                                    'listing_status' => $listing->status,
+                                ]);
+                            } else {
+                                Log::warning('HyperPay: Could not mark listing as sold', [
+                                    'order_id' => $order->id,
+                                    'listing_id' => $listing?->id,
+                                    'listing_status' => $listing?->status,
+                                    'has_listing' => !is_null($listing),
+                                ]);
                             }
+
+                            // Audit log
+                            AuditHelper::log(
+                                'order.payment_confirmed',
+                                Order::class,
+                                $order->id,
+                                ['status' => $oldStatus, 'note' => 'Payment intent - not yet a real order'],
+                                [
+                                    'status' => 'escrow_hold',
+                                    'paid_at' => $order->paid_at->toIso8601String(),
+                                    'escrow_hold_at' => $order->escrow_hold_at->toIso8601String(),
+                                    'listing_sold' => $listingSold,
+                                    'note' => 'Order confirmed - payment received via HyperPay status check',
+                                ],
+                                request()
+                            );
 
                             // Send notifications
                             $order->buyer->notify(new PaymentConfirmed($order));
-                            if ($listing) {
+                            if ($listingSold && $listing) {
                                 $order->seller->notify(new \App\Notifications\AccountSold($listing, $order));
                             }
                             $order->buyer->notify(new OrderStatusChanged($order, $oldStatus, 'escrow_hold'));
