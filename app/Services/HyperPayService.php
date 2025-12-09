@@ -204,7 +204,9 @@ class HyperPayService
             return $cached;
         }
         
-        // Get appropriate entity ID based on payment brand (defaults to MADA)
+        // Get appropriate entity ID based on payment brand
+        // For COPYandPAY widget (brand = null), use Visa/MasterCard entity ID (same as checkout)
+        // For specific brands, use the appropriate entity ID
         $entityId = $this->getEntityId($brand);
         
         Log::info('HyperPay: Getting payment status', [

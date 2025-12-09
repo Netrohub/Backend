@@ -785,7 +785,9 @@ class PaymentController extends Controller
         }
 
         try {
-            $statusResponse = $this->hyperPayService->getPaymentStatus($validated['resourcePath']);
+            // For COPYandPAY widget, use Visa/MasterCard entity ID (same as checkout preparation)
+            // The widget handles all brands, but status check should use the same entity ID as checkout
+            $statusResponse = $this->hyperPayService->getPaymentStatus($validated['resourcePath'], null);
             
             $resultCode = $statusResponse['result']['code'] ?? null;
             $resultDescription = $statusResponse['result']['description'] ?? 'Unknown status';
