@@ -797,20 +797,14 @@ class PaymentController extends Controller
             
             $isSuccessful = $resultCode && $this->hyperPayService->isPaymentSuccessful($resultCode);
             $isPending = $resultCode && $this->hyperPayService->isPaymentPending($resultCode);
-            $isResourceNotFound = $resultCode && $this->hyperPayService->isResourceNotFound($resultCode);
             
-            // If resource not found, treat as pending (payment might not be processed yet)
-            if ($isResourceNotFound) {
-                Log::info('HyperPay: Resource not found, treating as pending', [
+            // Log detailed error for debugging
+            if (!$isSuccessful && !$isPending) {
+                Log::warning('HyperPay: Payment failed', [
                     'order_id' => $order->id,
                     'result_code' => $resultCode,
+                    'result_description' => $resultDescription,
                     'resource_path' => $validated['resourcePath'],
-                ]);
-                
-                return response()->json([
-                    'status' => 'pending',
-                    'resultCode' => $resultCode,
-                    'resultDescription' => 'Payment is being processed. Please check again in a moment.',
                     'response' => $statusResponse,
                 ]);
             }
@@ -890,8 +884,11 @@ class PaymentController extends Controller
                 }
             }
 
+            // Only return success or failed - no pending for immediate payment methods
+            $finalStatus = $isSuccessful ? 'success' : 'failed';
+            
             return response()->json([
-                'status' => $isSuccessful ? 'success' : ($isPending ? 'pending' : 'failed'),
+                'status' => $finalStatus,
                 'resultCode' => $resultCode,
                 'resultDescription' => $resultDescription,
                 'isMadaCard' => $isMadaCard,
