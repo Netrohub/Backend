@@ -604,25 +604,10 @@ class PaymentController extends Controller
             'billing.country' => 'SA', // Required field - Saudi Arabia (Alpha-2 code)
             'billing.state' => 'Riyadh', // Required field - default to Riyadh province
             
-            // Browser data (mandatory for 3DS 2.0)
-            'customer.browser.acceptHeader' => $browserData['acceptHeader'] ?? 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'customer.browser.language' => $browserData['language'] ?? 'en',
-            'customer.browser.screenHeight' => (string)($browserData['screenHeight'] ?? 1080),
-            'customer.browser.screenWidth' => (string)($browserData['screenWidth'] ?? 1920),
-            'customer.browser.timezone' => (string)($browserData['timezone'] ?? 0),
-            'customer.browser.userAgent' => $browserData['userAgent'] ?? ($request->header('User-Agent') ?? 'Mozilla/5.0'),
-            // CRITICAL: Send boolean values, not strings (HyperPay expects true/false, not 'true'/'false')
-            'customer.browser.javaEnabled' => filter_var($browserData['javaEnabled'] ?? false, FILTER_VALIDATE_BOOLEAN),
-            'customer.browser.javascriptEnabled' => filter_var($browserData['javascriptEnabled'] ?? true, FILTER_VALIDATE_BOOLEAN),
+            // NOTE: Browser data is NOT sent here for COPYandPAY widget
+            // The COPYandPAY widget automatically collects and sends browser data when the form is submitted
+            // Sending it during checkout preparation causes "was already set and cannot be overwritten" errors
         ];
-        
-        // Optional browser fields (recommended for better frictionless flow)
-        if (isset($browserData['screenColorDepth'])) {
-            $checkoutData['customer.browser.screenColorDepth'] = (string)$browserData['screenColorDepth'];
-        }
-        if (isset($browserData['challengeWindow'])) {
-            $checkoutData['customer.browser.challengeWindow'] = $browserData['challengeWindow'];
-        }
         
         // Calculate account age and purchase history for better frictionless flow
         $accountCreatedAt = $user->created_at;
