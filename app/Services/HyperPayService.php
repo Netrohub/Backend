@@ -102,10 +102,10 @@ class HyperPayService
         // Add integrity=true for PCI DSS v4.0 compliance
         $data['integrity'] = 'true';
         
-        // IMPORTANT: For COPYandPAY, entityId is ONLY used in Basic Auth, NOT as a form parameter
-        // Do NOT include entityId in form data - it goes only in the Authorization header
-        // Removing entityId from data if it was accidentally included
-        unset($data['entityId']);
+        // According to HyperPay API Reference:
+        // - Authentication: Authorization Bearer <access-token> header
+        // - entityId: Sent as form parameter (Conditional)
+        // - Content-Type: application/x-www-form-urlencoded; charset=UTF-8
         
         Log::info('HyperPay: Preparing checkout', [
             'url' => $url,
@@ -115,18 +115,19 @@ class HyperPayService
             'currency' => $data['currency'] ?? null,
             'integrity' => true,
             'access_token_length' => strlen($this->accessToken),
-            'auth_method' => 'Basic Auth (entityId in header only)',
+            'auth_method' => 'Bearer Token (entityId as form parameter)',
         ]);
 
-        // Make HTTP request with Basic Auth
-        // HyperPay COPYandPAY uses Basic Authentication:
-        // - Username: Entity ID
-        // - Password: Access Token
-        // - Content-Type: application/x-www-form-urlencoded
-        // - entityId is NOT sent as a form parameter, only in Authorization header
-        $response = Http::withBasicAuth($entityId, $this->accessToken)
+        // Make HTTP request with Bearer Token Authentication
+        // According to HyperPay API Reference: "All requests are authenticated against an Authorization Bearer header with an access token"
+        // Entity ID is sent as a form parameter (entityId)
+        // Access Token is sent in Authorization header as Bearer token
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->accessToken,
+            'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8',
+        ])
             ->asForm()
-            ->post($url, $data);
+            ->post($url, array_merge($data, ['entityId' => $entityId]));
 
         $responseData = $response->json();
 
@@ -213,8 +214,12 @@ class HyperPayService
             'cache_key' => $cacheKey,
         ]);
 
-        $response = Http::withBasicAuth($entityId, $this->accessToken)
-            ->get($url);
+        // Use Bearer token authentication as per API reference
+        // For GET requests, entityId may be sent as query parameter if required
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->accessToken,
+        ])
+            ->get($url, ['entityId' => $entityId]);
 
         $responseData = $response->json();
 
@@ -384,9 +389,12 @@ class HyperPayService
         ];
         
         try {
-            $response = Http::withBasicAuth($this->entityId, $this->accessToken)
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->accessToken,
+                'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8',
+            ])
                 ->asForm()
-                ->post($url, $testData);
+                ->post($url, array_merge($testData, ['entityId' => $this->entityId]));
             
             $responseData = $response->json();
             
