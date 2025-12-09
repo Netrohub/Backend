@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: nxoland-api
+    env: php
+    buildCommand: composer install --no-dev --optimize-autoloader && php artisan route:clear && php artisan config:clear && php artisan cache:clear
+    startCommand: php artisan route:clear && php artisan config:clear && php artisan serve --host=0.0.0.0 --port=$PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: error
+      - key: DB_CONNECTION
+        value: pgsql
+      # Note: DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD must be set in Render Dashboard
+      # as environment variables (not in render.yaml) since they're sensitive
+      - key: APP_KEY
+        value: base64:0yNsmWN+v7f2vpWRQcXqcTG852wlJ60q7SEzCpU7LUA=
+      - key: CACHE_DRIVER
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: SESSION_DRIVER
+        value: database
+      - key: FRONTEND_URL
+        value: https://nxoland.com
+    healthCheckPath: /up
+

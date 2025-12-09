@@ -1,0 +1,149 @@
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+
+class TapPaymentService
+{
+    private string $secretKey;
+    private string $publicKey;
+    private string $baseUrl;
+
+    public function __construct()
+    {
+        $this->secretKey = config('services.tap.secret_key');
+        $this->publicKey = config('services.tap.public_key');
+        $this->baseUrl = config('services.tap.base_url', 'https://api.tap.company/v2');
+    }
+
+    public function createCharge(array $data): array
+    {
+        Log::info('Tap Charge Request', [
+            'url' => $this->baseUrl . '/charges',
+            'data' => $data,
+            'api_key_length' => strlen($this->secretKey),
+        ]);
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->secretKey,
+            'Content-Type' => 'application/json',
+        ])->post($this->baseUrl . '/charges', $data);
+
+        $responseData = $response->json();
+
+        Log::info('Tap Charge Response', [
+            'status_code' => $response->status(),
+            'response' => $responseData,
+            'success' => $response->successful(),
+        ]);
+
+        if (!$response->successful()) {
+            Log::error('Tap Charge Failed', [
+                'status' => $response->status(),
+                'error' => $responseData,
+            ]);
+        }
+
+        return $responseData;
+    }
+
+    public function retrieveCharge(string $chargeId): array
+    {
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->secretKey,
+        ])->get($this->baseUrl . '/charges/' . $chargeId);
+
+        return $response->json();
+    }
+
+    public function verifyWebhookSignature(array $payload, ?string $hashstring): bool
+    {
+        if (!$hashstring) {
+            return false;
+        }
+
+        // Extract values according to Tap webhook documentation
+        $id = $payload['id'] ?? '';
+        $amount = $payload['amount'] ?? 0;
+        $currency = $payload['currency'] ?? '';
+        $gateway_reference = $payload['reference']['gateway'] ?? '';
+        $payment_reference = $payload['reference']['payment'] ?? '';
+        $status = $payload['status'] ?? '';
+        $created = $payload['transaction']['created'] ?? '';
+
+        // Round amount to proper decimal places based on currency
+        $decimalPlaces = in_array($currency, ['BHD', 'KWD', 'OMR']) ? 3 : 2;
+        $amount = number_format((float)$amount, $decimalPlaces, '.', '');
+
+        // Build hashstring according to Tap documentation
+        $toBeHashedString = 'x_id' . $id . 
+                           'x_amount' . $amount . 
+                           'x_currency' . $currency . 
+                           'x_gateway_reference' . $gateway_reference . 
+                           'x_payment_reference' . $payment_reference . 
+                           'x_status' . $status . 
+                           'x_created' . $created;
+
+        // Calculate hash using your Tap secret key
+        $calculatedHash = hash_hmac('sha256', $toBeHashedString, $this->secretKey);
+
+        return hash_equals($calculatedHash, $hashstring);
+    }
+
+    /**
+     * Create a transfer/payout to bank account
+     * 
+     * @param array $data Transfer data including amount, currency, destination (bank account)
+     * @return array Tap API response
+     */
+    public function createTransfer(array $data): array
+    {
+        Log::info('Tap Transfer Request', [
+            'url' => $this->baseUrl . '/transfers',
+            'request_data' => $data,
+            'api_key_length' => strlen($this->secretKey),
+        ]);
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->secretKey,
+            'Content-Type' => 'application/json',
+        ])->post($this->baseUrl . '/transfers', $data);
+
+        $responseData = $response->json();
+        $statusCode = $response->status();
+
+        Log::info('Tap Transfer Response', [
+            'status_code' => $statusCode,
+            'response' => $responseData,
+            'success' => $response->successful(),
+        ]);
+
+        if (!$response->successful()) {
+            Log::error('Tap Transfer Failed', [
+                'status_code' => $statusCode,
+                'response' => $responseData,
+                'request_data' => $data,
+            ]);
+        }
+
+        return $responseData;
+    }
+
+    /**
+     * Retrieve transfer status
+     * 
+     * @param string $transferId Tap transfer ID
+     * @return array Tap API response
+     */
+    public function retrieveTransfer(string $transferId): array
+    {
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->secretKey,
+        ])->get($this->baseUrl . '/transfers/' . $transferId);
+
+        return $response->json();
+    }
+}
+

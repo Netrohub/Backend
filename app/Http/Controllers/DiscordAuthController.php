@@ -1,0 +1,619 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\User;
+use App\Models\Wallet;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Cache;
+use Laravel\Sanctum\PersonalAccessToken;
+use App\Http\Controllers\MessageHelper;
+
+class DiscordAuthController extends Controller
+{
+    /**
+     * Redirect user to Discord OAuth2 authorization
+     * 
+     * @param Request $request
+     * @param string $mode 'login' or 'connect'
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function redirect(Request $request, string $mode = 'login')
+    {
+        $request->validate([
+            'mode' => 'sometimes|in:login,connect',
+            'token' => 'sometimes|string', // Token for connect mode (passed as query param)
+        ]);
+        
+        $mode = $request->input('mode', $mode);
+        
+        // For 'connect' mode, user must be authenticated
+        if ($mode === 'connect') {
+            $user = $this->authenticateUser($request);
+            
+            if (!$user) {
+                return response()->json([
+                    'error' => 'authentication_required',
+                    'message' => 'You must be logged in to connect your Discord account.',
+                ], 401);
+            }
+            
+            // Store user ID in state for verification in callback
+            $userId = $user->id;
+        } else {
+            $userId = null;
+        }
+        
+        $clientId = config('services.discord.client_id');
+        $redirectUri = config('services.discord.redirect_uri');
+        $scopes = config('services.discord.scopes', 'identify email');
+        
+        if (!$clientId || !$redirectUri) {
+            Log::error('Discord OAuth configuration missing', [
+                'has_client_id' => !empty($clientId),
+                'has_redirect_uri' => !empty($redirectUri),
+            ]);
+            
+            return response()->json([
+                'error' => 'discord_config_missing',
+                'message' => 'Discord OAuth is not properly configured.',
+            ], 500);
+        }
+        
+        $state = bin2hex(random_bytes(16));
+        $redirectTo = $request->query('redirect_to', '/');
+        
+        // Store state in cache for 10 minutes (same as TikTok OAuth)
+        Cache::put("discord_oauth_state:{$state}", [
+            'state' => $state,
+            'mode' => $mode,
+            'redirect_to' => $redirectTo,
+            'user_id' => $userId ?? null, // Store user ID for connect mode verification
+        ], now()->addMinutes(10));
+        
+        $params = http_build_query([
+            'client_id' => $clientId,
+            'redirect_uri' => $redirectUri,
+            'response_type' => 'code',
+            'scope' => $scopes,
+            'state' => $state,
+        ]);
+        
+        $authUrl = "https://discord.com/api/oauth2/authorize?{$params}";
+        
+        return redirect($authUrl);
+    }
+
+    /**
+     * Handle Discord OAuth2 callback
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function callback(Request $request)
+    {
+        $code = $request->query('code');
+        $state = $request->query('state');
+        $error = $request->query('error');
+        
+        // Handle OAuth errors
+        if ($error) {
+            Log::warning('Discord OAuth error', ['error' => $error]);
+            return redirect(config('app.frontend_url') . '/auth?error=discord_oauth_failed');
+        }
+        
+        // Verify state from cache
+        $stateData = Cache::get("discord_oauth_state:{$state}");
+        
+        if (!$stateData || !isset($stateData['state']) || $stateData['state'] !== $state) {
+            Log::warning('Discord OAuth state mismatch or expired', [
+                'provided' => $state,
+                'cached' => $stateData ? 'exists' : 'missing',
+            ]);
+            return redirect(config('app.frontend_url') . '/auth?error=invalid_state');
+        }
+        
+        if (!$code) {
+            return redirect(config('app.frontend_url') . '/auth?error=no_code');
+        }
+        
+        $mode = $stateData['mode'] ?? 'login';
+        $redirectTo = $stateData['redirect_to'] ?? '/';
+        
+        // Clear state from cache
+        Cache::forget("discord_oauth_state:{$state}");
+        
+        try {
+            // Exchange code for access token
+            $tokenResponse = Http::asForm()->post('https://discord.com/api/oauth2/token', [
+                'client_id' => config('services.discord.client_id'),
+                'client_secret' => config('services.discord.client_secret'),
+                'grant_type' => 'authorization_code',
+                'code' => $code,
+                'redirect_uri' => config('services.discord.redirect_uri'),
+            ]);
+            
+            if (!$tokenResponse->successful()) {
+                Log::error('Discord token exchange failed', [
+                    'status' => $tokenResponse->status(),
+                    'body' => $tokenResponse->body(),
+                ]);
+                return redirect(config('app.frontend_url') . '/auth?error=token_exchange_failed');
+            }
+            
+            $tokenData = $tokenResponse->json();
+            $accessToken = $tokenData['access_token'] ?? null;
+            
+            if (!$accessToken) {
+                return redirect(config('app.frontend_url') . '/auth?error=no_access_token');
+            }
+            
+            // Get user info from Discord
+            $userResponse = Http::withToken($accessToken)
+                ->get('https://discord.com/api/users/@me');
+            
+            if (!$userResponse->successful()) {
+                Log::error('Discord user info fetch failed', [
+                    'status' => $userResponse->status(),
+                    'body' => $userResponse->body(),
+                ]);
+                return redirect(config('app.frontend_url') . '/auth?error=user_info_failed');
+            }
+            
+            $discordUser = $userResponse->json();
+            $discordUserId = $discordUser['id'] ?? null;
+            $discordUsername = ($discordUser['username'] ?? '') . '#' . ($discordUser['discriminator'] ?? '0000');
+            $discordAvatar = $discordUser['avatar'] 
+                ? "https://cdn.discordapp.com/avatars/{$discordUserId}/{$discordUser['avatar']}.png"
+                : null;
+            $discordEmail = $discordUser['email'] ?? null;
+            
+            if (!$discordUserId) {
+                return redirect(config('app.frontend_url') . '/auth?error=invalid_discord_user');
+            }
+            
+            // Automatically add user to Discord server (non-blocking - don't fail if this fails)
+            // Only add if guild_id is configured
+            $guildId = config('services.discord.guild_id');
+            if ($guildId) {
+                $this->addUserToGuild($discordUserId, $accessToken);
+            } else {
+                Log::debug('Discord guild ID not configured, skipping auto-join', [
+                    'discord_user_id' => $discordUserId,
+                ]);
+            }
+            
+            // Handle login vs connect mode
+            if ($mode === 'connect') {
+                $userIdFromState = $stateData['user_id'] ?? null;
+                return $this->handleConnect($request, $discordUserId, $discordUsername, $discordAvatar, $userIdFromState);
+            } else {
+                return $this->handleLogin($request, $discordUserId, $discordUsername, $discordAvatar, $discordEmail);
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('Discord OAuth callback exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return redirect(config('app.frontend_url') . '/auth?error=oauth_exception');
+        }
+    }
+
+    /**
+     * Handle login mode - log in existing user or create new one
+     */
+    private function handleLogin(Request $request, string $discordUserId, string $discordUsername, ?string $discordAvatar, ?string $discordEmail)
+    {
+        // SECURITY: Check if user is already authenticated
+        $authenticatedUser = $request->user();
+        
+        // Check if Discord account is already linked
+        $discordLinkedUser = User::where('discord_user_id', $discordUserId)->first();
+        
+        // SECURITY FIX: If user is already logged in and Discord is linked to a different account, prevent account switching
+        if ($authenticatedUser && $discordLinkedUser && $discordLinkedUser->id !== $authenticatedUser->id) {
+            Log::warning('SECURITY: Attempted account switching via Discord OAuth', [
+                'authenticated_user_id' => $authenticatedUser->id,
+                'discord_user_id' => $discordUserId,
+                'discord_linked_user_id' => $discordLinkedUser->id,
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+            return redirect(config('app.frontend_url') . '/auth?error=discord_already_linked_security');
+        }
+        
+        // If Discord is already linked, log into that account (only if not already authenticated as different user)
+        if ($discordLinkedUser) {
+            // User exists - log them in
+            $token = $discordLinkedUser->createToken('discord-auth-token')->plainTextToken;
+            
+            return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+        }
+        
+        // New user - create account
+        // Try to find by email if provided
+        if ($discordEmail) {
+            $existingUser = User::where('email', strtolower($discordEmail))->first();
+            if ($existingUser) {
+                // SECURITY: Check if Discord ID is already linked to another user
+                $discordLinkedUser = User::where('discord_user_id', $discordUserId)
+                    ->where('id', '!=', $existingUser->id)
+                    ->first();
+                
+                if ($discordLinkedUser) {
+                    Log::warning('SECURITY: Attempt to link Discord account already linked to another user via email match', [
+                        'discord_user_id' => $discordUserId,
+                        'existing_user_id' => $discordLinkedUser->id,
+                        'attempted_user_id' => $existingUser->id,
+                        'email' => $discordEmail,
+                        'ip' => $request->ip(),
+                    ]);
+                    return redirect(config('app.frontend_url') . '/auth?error=discord_already_linked');
+                }
+                
+                // SECURITY: Also check if authenticated user is different from email-matched user
+                if ($authenticatedUser && $authenticatedUser->id !== $existingUser->id) {
+                    Log::warning('SECURITY: Attempted account switching via email match in Discord OAuth', [
+                        'authenticated_user_id' => $authenticatedUser->id,
+                        'email_matched_user_id' => $existingUser->id,
+                        'discord_user_id' => $discordUserId,
+                        'ip' => $request->ip(),
+                    ]);
+                    return redirect(config('app.frontend_url') . '/auth?error=discord_already_linked_security');
+                }
+                
+                // Link Discord to existing email account
+                $existingUser->update([
+                    'discord_user_id' => $discordUserId,
+                    'discord_username' => $discordUsername,
+                    'discord_avatar' => $discordAvatar,
+                    'discord_connected_at' => now(),
+                ]);
+                
+                $token = $existingUser->createToken('discord-auth-token')->plainTextToken;
+                return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+            }
+        }
+        
+        // Double-check Discord ID isn't already linked (race condition protection)
+        $existingDiscordUser = User::where('discord_user_id', $discordUserId)->first();
+        if ($existingDiscordUser) {
+            // SECURITY: If authenticated user exists and is different, prevent account switching
+            if ($authenticatedUser && $authenticatedUser->id !== $existingDiscordUser->id) {
+                Log::warning('SECURITY: Attempted account switching via Discord OAuth (race condition check)', [
+                    'authenticated_user_id' => $authenticatedUser->id,
+                    'discord_linked_user_id' => $existingDiscordUser->id,
+                    'discord_user_id' => $discordUserId,
+                    'ip' => $request->ip(),
+                ]);
+                return redirect(config('app.frontend_url') . '/auth?error=discord_already_linked_security');
+            }
+            
+            // Discord already linked - log them in instead
+            $token = $existingDiscordUser->createToken('discord-auth-token')->plainTextToken;
+            return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+        }
+        
+        // Create new user
+        $username = User::generateUsername($discordUsername);
+        $email = $discordEmail ?? "discord_{$discordUserId}@nxoland.local"; // Placeholder email
+        
+        // Generate random password (user can set it later if needed)
+        $password = Hash::make(bin2hex(random_bytes(32)));
+        
+        try {
+            $user = User::create([
+                'name' => $discordUsername,
+                'username' => $username,
+                'display_name' => $discordUsername,
+                'email' => $email,
+                'password' => $password,
+                'discord_user_id' => $discordUserId,
+                'discord_username' => $discordUsername,
+                'discord_avatar' => $discordAvatar,
+                'discord_connected_at' => now(),
+                'email_verified_at' => $discordEmail ? now() : null, // Auto-verify if email from Discord
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Handle unique constraint violation (race condition)
+            if ($e->getCode() === '23505' || str_contains($e->getMessage(), 'discord_user_id')) {
+                Log::warning('Discord user ID unique constraint violation during user creation', [
+                    'discord_user_id' => $discordUserId,
+                    'error' => $e->getMessage(),
+                ]);
+                
+                // Try to find and log in the existing user
+                $existingUser = User::where('discord_user_id', $discordUserId)->first();
+                if ($existingUser) {
+                    $token = $existingUser->createToken('discord-auth-token')->plainTextToken;
+                    return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+                }
+            }
+            
+            throw $e;
+        }
+        
+        // Create wallet for new user
+        if (!$user->wallet) {
+            Wallet::create([
+                'user_id' => $user->id,
+                'available_balance' => 0,
+                'on_hold_balance' => 0,
+                'withdrawn_total' => 0,
+            ]);
+        }
+        
+        $token = $user->createToken('discord-auth-token')->plainTextToken;
+        
+        return redirect(config('app.frontend_url') . '/auth/discord/callback?token=' . urlencode($token) . '&mode=login');
+    }
+
+    /**
+     * Handle connect mode - link Discord to existing authenticated user
+     */
+    private function handleConnect(Request $request, string $discordUserId, string $discordUsername, ?string $discordAvatar, ?int $userIdFromState = null)
+    {
+        // Get user from state (stored during redirect) or from request
+        $user = null;
+        
+        if ($userIdFromState) {
+            $user = User::find($userIdFromState);
+        } else {
+            $user = $request->user();
+        }
+        
+        // SECURITY: User must be authenticated
+        if (!$user) {
+            Log::warning('SECURITY: Attempt to connect Discord without authentication', [
+                'discord_user_id' => $discordUserId,
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+            return redirect(config('app.frontend_url') . '/auth?error=not_authenticated');
+        }
+        
+        // SECURITY: Verify user from state matches authenticated user (if both exist)
+        $authenticatedUser = $request->user();
+        if ($authenticatedUser && $userIdFromState && $authenticatedUser->id !== $userIdFromState) {
+            Log::warning('SECURITY: User ID mismatch in Discord connect - potential session hijacking', [
+                'authenticated_user_id' => $authenticatedUser->id,
+                'state_user_id' => $userIdFromState,
+                'discord_user_id' => $discordUserId,
+                'ip' => $request->ip(),
+            ]);
+            return redirect(config('app.frontend_url') . '/auth?error=session_mismatch');
+        }
+        
+        // SECURITY: Check if Discord ID is already linked to another user
+        $existingUser = User::where('discord_user_id', $discordUserId)
+            ->where('id', '!=', $user->id)
+            ->first();
+        
+        if ($existingUser) {
+            Log::warning('SECURITY: Attempt to link Discord account already linked to another user', [
+                'discord_user_id' => $discordUserId,
+                'existing_user_id' => $existingUser->id,
+                'attempted_user_id' => $user->id,
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+            return redirect(config('app.frontend_url') . '/profile?error=discord_already_linked');
+        }
+        
+        // Link Discord to current user (with error handling for race conditions)
+        try {
+            $user->update([
+                'discord_user_id' => $discordUserId,
+                'discord_username' => $discordUsername,
+                'discord_avatar' => $discordAvatar,
+                'discord_connected_at' => now(),
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Handle unique constraint violation (race condition)
+            if ($e->getCode() === '23505' || str_contains($e->getMessage(), 'discord_user_id')) {
+                Log::warning('Discord user ID unique constraint violation during connect', [
+                    'discord_user_id' => $discordUserId,
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+                return redirect(config('app.frontend_url') . '/profile?error=discord_already_linked');
+            }
+            throw $e;
+        }
+        
+        return redirect(config('app.frontend_url') . '/profile?discord_connected=true');
+    }
+
+    /**
+     * Manually authenticate user from Bearer token (for public routes)
+     * Supports both Authorization header and token query parameter
+     */
+    private function authenticateUser(Request $request): ?User
+    {
+        // Try to get user from request (if middleware already authenticated)
+        if ($request->user()) {
+            return $request->user();
+        }
+        
+        $token = null;
+        
+        // Check for token in query parameter (for browser redirects)
+        if ($request->has('token')) {
+            $token = $request->input('token');
+        }
+        // Check for Bearer token in Authorization header
+        else {
+            $authHeader = $request->header('Authorization');
+            if ($authHeader && str_starts_with($authHeader, 'Bearer ')) {
+                $token = substr($authHeader, 7); // Remove 'Bearer ' prefix
+            }
+        }
+        
+        if (!$token) {
+            return null;
+        }
+        
+        // Find the token in database
+        $accessToken = PersonalAccessToken::findToken($token);
+        
+        if (!$accessToken) {
+            return null;
+        }
+        
+        // Get the user from the token
+        return $accessToken->tokenable;
+    }
+
+    /**
+     * Add user to Discord server/guild using OAuth access token
+     * 
+     * @param string $discordUserId The Discord user ID
+     * @param string $accessToken The OAuth access token
+     * @return bool True if successful, false otherwise
+     */
+    private function addUserToGuild(string $discordUserId, string $accessToken): bool
+    {
+        $guildId = config('services.discord.guild_id');
+        $botToken = config('services.discord.bot_token');
+        
+        if (!$guildId) {
+            Log::debug('Discord guild ID not configured, skipping auto-join');
+            return false;
+        }
+        
+        if (!$botToken) {
+            Log::warning('Discord bot token not configured, cannot add user to server', [
+                'discord_user_id' => $discordUserId,
+                'guild_id' => $guildId,
+            ]);
+            return false;
+        }
+        
+        try {
+            // Discord API: PUT /guilds/{guild.id}/members/{user.id}
+            // IMPORTANT: Authorization header must use BOT token, not user's OAuth token!
+            // The user's OAuth access token goes in the request body
+            // The bot must be in the server with "Create Instant Invite" permission
+            // 
+            // Authorization header: Bot {bot_token}
+            // Body: { "access_token": "{user_oauth_token}" }
+            
+            $response = Http::withHeaders([
+                'Authorization' => "Bot {$botToken}",
+                'Content-Type' => 'application/json',
+            ])->put("https://discord.com/api/guilds/{$guildId}/members/{$discordUserId}", [
+                'access_token' => $accessToken, // User's OAuth token goes in body
+            ]);
+            
+            $status = $response->status();
+            $body = $response->json();
+            
+            // 201 = Created (user was successfully added)
+            // 204 = No Content (user was already in server - also success)
+            if ($status === 201 || $status === 204) {
+                Log::info('User added to Discord server successfully', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                    'status' => $status,
+                ]);
+                return true;
+            }
+            
+            // 400 = Bad Request - might mean user is already in server or invalid request
+            if ($status === 400) {
+                $errorCode = $body['code'] ?? null;
+                $errorMessage = $body['message'] ?? 'Unknown error';
+                
+                // Check if error is because user is already in server
+                if (str_contains(strtolower($errorMessage), 'already') || $errorCode === 50007) {
+                    Log::info('User already in Discord server', [
+                        'discord_user_id' => $discordUserId,
+                        'guild_id' => $guildId,
+                    ]);
+                    return true; // Treat as success
+                }
+                
+                Log::warning('Discord API returned 400 Bad Request', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                    'error_code' => $errorCode,
+                    'error_message' => $errorMessage,
+                    'response' => $body,
+                ]);
+            }
+            
+            // 403 = Forbidden - bot doesn't have permission or OAuth app not authorized
+            if ($status === 403) {
+                Log::error('Discord API returned 403 Forbidden - Check bot permissions and OAuth authorization', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                    'error_code' => $body['code'] ?? null,
+                    'error_message' => $body['message'] ?? 'Forbidden',
+                    'response' => $body,
+                    'note' => 'Bot must be in server with "Create Instant Invite" permission. OAuth app must be authorized.',
+                ]);
+            }
+            
+            // 404 = Not Found - guild or user not found
+            if ($status === 404) {
+                Log::error('Discord API returned 404 Not Found', [
+                    'discord_user_id' => $discordUserId,
+                    'guild_id' => $guildId,
+                    'error_message' => $body['message'] ?? 'Not Found',
+                    'response' => $body,
+                    'note' => 'Check if guild_id is correct and bot is in the server',
+                ]);
+            }
+            
+            Log::warning('Failed to add user to Discord server', [
+                'discord_user_id' => $discordUserId,
+                'guild_id' => $guildId,
+                'status' => $status,
+                'response' => $body,
+            ]);
+            
+            return false;
+        } catch (\Exception $e) {
+            // Don't fail the OAuth flow if adding to server fails
+            Log::error('Exception adding user to Discord server', [
+                'discord_user_id' => $discordUserId,
+                'guild_id' => $guildId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Disconnect Discord account
+     */
+    public function disconnect(Request $request)
+    {
+        $user = $request->user();
+        
+        if (!$user->hasDiscord()) {
+            return response()->json([
+                'error' => 'discord_not_connected',
+                'message' => 'Discord account is not connected.',
+            ], 400);
+        }
+        
+        $user->update([
+            'discord_user_id' => null,
+            'discord_username' => null,
+            'discord_avatar' => null,
+            'discord_connected_at' => null,
+        ]);
+        
+        return response()->json([
+            'message' => 'Discord account disconnected successfully.',
+        ]);
+    }
+}
+

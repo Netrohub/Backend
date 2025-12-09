@@ -1,0 +1,77 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Order extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'listing_id',
+        'buyer_id',
+        'seller_id',
+        'amount',
+        'status',
+        'tap_charge_id',
+        'paylink_transaction_no',
+        'paid_at',
+        'escrow_hold_at',
+        'escrow_release_at',
+        'completed_at',
+        'notes',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'amount' => 'decimal:2',
+            'paid_at' => 'datetime',
+            'escrow_hold_at' => 'datetime',
+            'escrow_release_at' => 'datetime',
+            'completed_at' => 'datetime',
+        ];
+    }
+
+    // Relationships
+    public function listing()
+    {
+        return $this->belongsTo(Listing::class);
+    }
+
+    public function buyer()
+    {
+        return $this->belongsTo(User::class, 'buyer_id');
+    }
+
+    public function seller()
+    {
+        return $this->belongsTo(User::class, 'seller_id');
+    }
+    
+    /**
+     * Get orders only from active users (non-deleted buyers and sellers)
+     * Use this scope when displaying orders to exclude those involving deleted users
+     */
+    public function scopeWithActiveUsers($query)
+    {
+        return $query->whereHas('buyer', function ($q) {
+            $q->withoutTrashed();
+        })->whereHas('seller', function ($q) {
+            $q->withoutTrashed();
+        });
+    }
+
+    public function dispute()
+    {
+        return $this->hasOne(Dispute::class);
+    }
+
+    public function payment()
+    {
+        return $this->hasOne(Payment::class);
+    }
+}
