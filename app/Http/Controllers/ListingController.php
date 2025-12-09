@@ -92,14 +92,23 @@ class ListingController extends Controller
 
         // Cache paginated results for 10 minutes
         // Note: Only cache first page with no search to avoid cache bloat
+        // Order: Active listings first (by newest), then sold listings (by newest)
         if ($page === 1 && !$request->has('search')) {
             $listings = Cache::remember($cacheKey, 600, function () use ($query, $request, $transformPaginated) {
-                $paginator = PaginationHelper::paginate($query->orderBy('created_at', 'desc'), $request);
+                $paginator = PaginationHelper::paginate(
+                    $query->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+                          ->orderBy('created_at', 'desc'), 
+                    $request
+                );
                 return $transformPaginated($paginator);
             });
         } else {
             // Don't cache search results or paginated pages
-            $paginator = PaginationHelper::paginate($query->orderBy('created_at', 'desc'), $request);
+            $paginator = PaginationHelper::paginate(
+                $query->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+                      ->orderBy('created_at', 'desc'), 
+                $request
+            );
             $listings = $transformPaginated($paginator);
         }
 
@@ -139,8 +148,9 @@ class ListingController extends Controller
             }
         }
 
-        // Order by most recent first
-        $query->orderBy('created_at', 'desc');
+        // Order: Active listings first (by newest), then sold listings (by newest)
+        $query->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+              ->orderBy('created_at', 'desc');
 
         return response()->json(PaginationHelper::paginate($query, $request));
     }
