@@ -43,6 +43,7 @@ class PaymentController extends Controller
     {
         $validated = $request->validate([
             'order_id' => 'required|exists:orders,id',
+            'payment_method' => 'nullable|string|in:MADA,VISA,MASTERCARD', // Payment method selection
             'browserData' => 'nullable|array',
             'browserData.acceptHeader' => 'nullable|string|max:2048',
             'browserData.language' => 'nullable|string|max:8',
@@ -208,11 +209,13 @@ class PaymentController extends Controller
         // Remove them to prevent format errors
 
         try {
-            $result = DB::transaction(function () use ($order, $checkoutData, $request) {
-                // Use COPYandPAY widget - it will show all payment methods (MADA, VISA, MASTER)
-                // The widget uses Visa/MasterCard entity ID and handles all brands automatically
-                // MADA will be shown first as per Saudi Payments requirements
-                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData);
+            // Get payment method from request (MADA, VISA, or MASTERCARD)
+            $paymentMethod = $validated['payment_method'] ?? null;
+            
+            $result = DB::transaction(function () use ($order, $checkoutData, $paymentMethod) {
+                // Use COPYandPAY widget with the selected payment method
+                // This ensures we use the correct entity ID (MADA entity ID for MADA, Visa/MasterCard for others)
+                $checkoutResponse = $this->hyperPayService->prepareCheckout($checkoutData, $paymentMethod);
 
                 if (!isset($checkoutResponse['id'])) {
                     $errorMessage = $checkoutResponse['result']['description'] 

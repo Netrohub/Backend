@@ -68,50 +68,37 @@ class HyperPayService
      */
     private function getEntityId(?string $brand = null): string
     {
-        // Use MADA entity ID for MADA payments, Visa/MasterCard for others
-        if (strtoupper($brand ?? '') === 'MADA') {
+        // Use MADA entity ID for MADA payments, Visa/MasterCard entity ID for Visa/MasterCard
+        $brandUpper = strtoupper($brand ?? '');
+        if ($brandUpper === 'MADA') {
             return $this->entityIdMada;
         }
+        // For VISA, MASTERCARD, or any other brand, use Visa/MasterCard entity ID
+        // (MASTERCARD is the full name, but both use the same entity ID)
         return $this->entityId;
     }
 
     /**
      * Prepare checkout for COPYandPAY widget
      * 
-     * For COPYandPAY, we use Visa/MasterCard entity ID by default as it's more universal.
-     * The widget will show all payment methods (MADA, VISA, MASTER) and handle brand selection.
-     * 
-     * IMPORTANT: When MADA payment is selected, the payment processing may require MADA entity ID.
-     * We handle this in the payment status check by detecting MADA payments and retrying with
-     * MADA entity ID. However, if the checkout doesn't support MADA with Visa/MasterCard entity ID,
-     * the payment will fail during processing (not just status check).
-     * 
-     * If MADA payments consistently fail, consider:
-     * 1. Checking with HyperPay if Visa/MasterCard entity ID supports MADA
-     * 2. Creating separate checkouts based on user preference
-     * 3. Using a unified entity ID that supports all brands
+     * Now supports payment method selection before checkout creation.
+     * This ensures we use the correct entity ID:
+     * - MADA entity ID for MADA payments
+     * - Visa/MasterCard entity ID for Visa/MasterCard payments
      * 
      * @param array $data Checkout data including amount, currency, etc.
-     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc. (not used for COPYandPAY - widget handles all brands)
+     * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTERCARD', etc.
+     *                          If provided, uses the appropriate entity ID for that brand.
+     *                          If null, defaults to MADA entity ID (primary in Saudi Arabia).
      * @return array Response with checkout ID and integrity hash
      */
     public function prepareCheckout(array $data, ?string $brand = null): array
     {
         $url = rtrim($this->baseUrl, '/') . '/v1/checkouts';
         
-        // For COPYandPAY widget, we need to choose the right entity ID.
-        // Since MADA is primary in Saudi Arabia and requires its own entity ID,
-        // we'll use MADA entity ID. If Visa/MasterCard payments fail, we'll handle that.
-        // 
-        // IMPORTANT: Check with HyperPay support if:
-        // 1. MADA entity ID supports Visa/MasterCard payments
-        // 2. Or if there's a unified entity ID that supports all brands
-        // 3. Or if we need separate checkout flows for each payment method
-        //
-        // For now, prioritizing MADA since it's the primary payment method in Saudi Arabia.
-        // If Visa/MasterCard payments fail, users can contact support or we can implement
-        // a payment method selection before checkout creation.
-        $entityId = $this->entityIdMada;
+        // Use the appropriate entity ID based on selected payment method
+        // MADA requires MADA entity ID, Visa/MasterCard use Visa/MasterCard entity ID
+        $entityId = $this->getEntityId($brand);
         
         // Format amount for test server: remove decimals (xx.00 -> xx)
         if ($this->environment === 'test' && isset($data['amount'])) {
@@ -130,7 +117,8 @@ class HyperPayService
         Log::info('HyperPay: Preparing checkout', [
             'url' => $url,
             'entity_id' => $entityId,
-            'brand' => 'COPYandPAY (all brands via widget)',
+            'brand' => $brand ?? 'MADA (default)',
+            'entity_id_type' => $brand === 'MADA' ? 'MADA' : 'Visa/MasterCard',
             'amount' => $data['amount'] ?? null,
             'currency' => $data['currency'] ?? null,
             'integrity' => true,
