@@ -225,11 +225,30 @@ class HyperPayService
             ->get($url, ['entityId' => $entityId]);
 
         $responseData = $response->json();
+        $resultCode = $responseData['result']['code'] ?? null;
+        $errorDescription = $responseData['result']['description'] ?? 'Unknown error';
+        $paymentBrand = $responseData['paymentBrand'] ?? null;
+        $paymentType = $responseData['paymentType'] ?? null;
+
+        // Check if we need to retry with MADA entity ID
+        // This can happen even when HTTP request is successful but result code indicates currency/subtype error
+        $shouldRetryWithMada = false;
+        
+        if ($brand === null && (
+            // Check result code for currency/subtype errors (600.200.500)
+            ($resultCode && str_starts_with($resultCode, '600.200')) ||
+            // Check error description
+            str_contains($errorDescription, 'currency') || 
+            str_contains($errorDescription, 'sub type') ||
+            str_contains($errorDescription, 'country or brand') ||
+            str_contains($errorDescription, 'not configured') ||
+            // Check if payment brand is MADA but we used Visa/MasterCard entity ID
+            ($paymentBrand === 'MADA' && $entityId === $this->entityId)
+        )) {
+            $shouldRetryWithMada = true;
+        }
 
         if (!$response->successful()) {
-            $resultCode = $responseData['result']['code'] ?? null;
-            $errorDescription = $responseData['result']['description'] ?? 'Unknown error';
-            
             // Check for rate limiting error (800.120.100)
             if ($resultCode === '800.120.100') {
                 Log::warning('HyperPay: Rate limit exceeded', [
@@ -251,15 +270,12 @@ class HyperPayService
             
             // If we get a currency/subtype error and brand is null (COPYandPAY widget),
             // try with MADA entity ID as the payment might be MADA
-            if ($brand === null && (
-                str_contains($errorDescription, 'currency') || 
-                str_contains($errorDescription, 'sub type') ||
-                str_contains($errorDescription, 'country or brand') ||
-                str_contains($errorDescription, 'not configured')
-            )) {
-                Log::info('HyperPay: Currency/subtype error detected, retrying with MADA entity ID', [
+            if ($shouldRetryWithMada) {
+                Log::info('HyperPay: Currency/subtype error detected (HTTP error), retrying with MADA entity ID', [
                     'resource_path' => $resourcePath,
                     'error' => $errorDescription,
+                    'result_code' => $resultCode,
+                    'payment_brand' => $paymentBrand,
                 ]);
                 
                 // Retry with MADA entity ID
@@ -272,7 +288,7 @@ class HyperPayService
                 $retryResponseData = $retryResponse->json();
                 
                 if ($retryResponse->successful()) {
-                    Log::info('HyperPay: Payment status retrieved with MADA entity ID', [
+                    Log::info('HyperPay: Payment status retrieved with MADA entity ID (after HTTP error)', [
                         'result_code' => $retryResponseData['result']['code'] ?? null,
                         'payment_type' => $retryResponseData['paymentType'] ?? null,
                     ]);
@@ -295,12 +311,54 @@ class HyperPayService
             throw new \Exception('HyperPay get payment status failed: ' . $errorMessage);
         }
 
-        // Cache successful response for 30 seconds (allows max 2 requests per minute)
+        // HTTP request successful, but check if result code indicates currency/subtype error
+        // This happens when payment was made with MADA but we're checking with Visa/MasterCard entity ID
+        if ($shouldRetryWithMada) {
+            Log::info('HyperPay: Currency/subtype error detected in result code, retrying with MADA entity ID', [
+                'resource_path' => $resourcePath,
+                'result_code' => $resultCode,
+                'error_description' => $errorDescription,
+                'payment_brand' => $paymentBrand,
+                'payment_type' => $paymentType,
+                'entity_id_used' => $entityId,
+            ]);
+            
+            // Retry with MADA entity ID
+            $madaEntityId = $this->entityIdMada;
+            $retryResponse = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->accessToken,
+            ])
+                ->get($url, ['entityId' => $madaEntityId]);
+            
+            $retryResponseData = $retryResponse->json();
+            
+            if ($retryResponse->successful()) {
+                $retryResultCode = $retryResponseData['result']['code'] ?? null;
+                Log::info('HyperPay: Payment status retrieved with MADA entity ID (after result code error)', [
+                    'result_code' => $retryResultCode,
+                    'payment_type' => $retryResponseData['paymentType'] ?? null,
+                    'payment_brand' => $retryResponseData['paymentBrand'] ?? null,
+                ]);
+                
+                // Cache successful response
+                Cache::put($cacheKey, $retryResponseData, 30);
+                return $retryResponseData;
+            } else {
+                // If retry also fails, log and return original response
+                Log::warning('HyperPay: Retry with MADA entity ID also failed', [
+                    'retry_status' => $retryResponse->status(),
+                    'retry_result_code' => $retryResponseData['result']['code'] ?? null,
+                ]);
+            }
+        }
+
+        // Cache response (even if it contains an error result code)
         Cache::put($cacheKey, $responseData, 30);
 
         Log::info('HyperPay: Payment status retrieved', [
-            'result_code' => $responseData['result']['code'] ?? null,
-            'payment_type' => $responseData['paymentType'] ?? null,
+            'result_code' => $resultCode,
+            'payment_type' => $paymentType,
+            'payment_brand' => $paymentBrand,
             'cached' => true,
         ]);
 
