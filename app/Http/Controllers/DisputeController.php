@@ -10,6 +10,7 @@ use App\Notifications\DisputeResolved;
 use App\Services\DisputeEventEmitter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use App\Http\Controllers\MessageHelper;
 use App\Helpers\PaginationHelper;
@@ -61,19 +62,32 @@ class DisputeController extends Controller
             return response()->json(['message' => MessageHelper::ERROR_UNAUTHORIZED], 403);
         }
 
-        // Require Discord connection for both buyer and seller
-        if (!$buyer->discord_user_id) {
+        // Require Discord connection only for the person creating the dispute (initiator)
+        // The other party can connect Discord later, but the initiator must have Discord
+        // to create the Discord thread for dispute management
+        $isBuyer = $order->buyer_id === $user->id;
+        $initiator = $isBuyer ? $buyer : $seller;
+        
+        if (!$initiator->discord_user_id) {
+            $partyName = $isBuyer ? 'Buyer' : 'Seller';
             return response()->json([
-                'message' => 'Buyer must connect Discord account to create disputes.',
-                'error' => 'discord_required_for_buyer',
+                'message' => "You must connect your Discord account to create disputes. Please connect Discord first.",
+                'error' => 'discord_required_for_initiator',
+                'party' => $isBuyer ? 'buyer' : 'seller',
             ], 400);
         }
 
-        if (!$seller->discord_user_id) {
-            return response()->json([
-                'message' => 'Seller must connect Discord account to create disputes.',
-                'error' => 'discord_required_for_seller',
-            ], 400);
+        // Log if the other party doesn't have Discord (for tracking, but don't block)
+        $otherParty = $isBuyer ? $seller : $buyer;
+        if (!$otherParty->discord_user_id) {
+            Log::info('Dispute created but other party missing Discord', [
+                'dispute_initiator' => $user->id,
+                'other_party_id' => $otherParty->id,
+                'other_party_type' => $isBuyer ? 'seller' : 'buyer',
+                'order_id' => $order->id,
+            ]);
+            // Note: We'll still create the dispute, but the other party will need to connect Discord
+            // to participate in the Discord thread. They'll be notified via email/in-app notification.
         }
 
         // Check if dispute already exists
@@ -128,8 +142,9 @@ class DisputeController extends Controller
         );
 
         // Send notifications to buyer and seller
-        $order->buyer->notify(new DisputeCreated($dispute));
-        $order->seller->notify(new DisputeCreated($dispute));
+        // Pass information about Discord connection status for better messaging
+        $order->buyer->notify(new DisputeCreated($dispute, !$buyer->discord_user_id));
+        $order->seller->notify(new DisputeCreated($dispute, !$seller->discord_user_id));
 
         // Emit Discord event (non-blocking)
         try {

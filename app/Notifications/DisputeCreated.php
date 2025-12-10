@@ -22,9 +22,13 @@ class DisputeCreated extends Notification implements ShouldQueue
     public ?string $description = null;
     public ?string $status = null;
 
+    public bool $missingDiscord = false;
+
     public function __construct(
-        public ?Dispute $dispute = null
+        public ?Dispute $dispute = null,
+        bool $missingDiscord = false
     ) {
+        $this->missingDiscord = $missingDiscord;
         // Store essential data in case model is deleted
         if ($dispute) {
             $this->disputeId = $dispute->id;
@@ -121,7 +125,7 @@ class DisputeCreated extends Notification implements ShouldQueue
                 ->action('View Dispute', SecurityHelper::frontendUrl('/disputes/' . $data['id']))
                 ->line('Thank you for your patience.');
         } else {
-            return (new MailMessage)
+            $mailMessage = (new MailMessage)
                 ->subject("Dispute Filed Against Order #{$data['order_id']}")
                 ->greeting("Hello {$userName},")
                 ->line("A dispute has been filed for Order #{$data['order_id']}.")
@@ -131,9 +135,18 @@ class DisputeCreated extends Notification implements ShouldQueue
                 ->line("- Description: {$data['description']}")
                 ->line("- Status: Under Review")
                 ->line("Our team will review the dispute and respond within 24-48 hours.")
-                ->line("Funds for this order are currently on hold until the dispute is resolved.")
-                ->action('View Dispute', SecurityHelper::frontendUrl('/disputes/' . $data['id']))
+                ->line("Funds for this order are currently on hold until the dispute is resolved.");
+            
+            // If user doesn't have Discord connected, prompt them to connect
+            if ($this->missingDiscord) {
+                $mailMessage->line("⚠️ IMPORTANT: To participate in the Discord dispute thread and receive faster support, please connect your Discord account.")
+                    ->action('Connect Discord', SecurityHelper::frontendUrl('/auth?tab=settings'));
+            }
+            
+            $mailMessage->action('View Dispute', SecurityHelper::frontendUrl('/disputes/' . $data['id']))
                 ->line('If you have any questions, please contact support.');
+            
+            return $mailMessage;
         }
     }
 }
