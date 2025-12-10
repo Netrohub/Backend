@@ -78,8 +78,18 @@ class HyperPayService
     /**
      * Prepare checkout for COPYandPAY widget
      * 
-     * For COPYandPAY, we use Visa/MasterCard entity ID by default.
+     * For COPYandPAY, we use Visa/MasterCard entity ID by default as it's more universal.
      * The widget will show all payment methods (MADA, VISA, MASTER) and handle brand selection.
+     * 
+     * IMPORTANT: When MADA payment is selected, the payment processing may require MADA entity ID.
+     * We handle this in the payment status check by detecting MADA payments and retrying with
+     * MADA entity ID. However, if the checkout doesn't support MADA with Visa/MasterCard entity ID,
+     * the payment will fail during processing (not just status check).
+     * 
+     * If MADA payments consistently fail, consider:
+     * 1. Checking with HyperPay if Visa/MasterCard entity ID supports MADA
+     * 2. Creating separate checkouts based on user preference
+     * 3. Using a unified entity ID that supports all brands
      * 
      * @param array $data Checkout data including amount, currency, etc.
      * @param string|null $brand Payment brand: 'MADA', 'VISA', 'MASTER', etc. (not used for COPYandPAY - widget handles all brands)
@@ -89,9 +99,19 @@ class HyperPayService
     {
         $url = rtrim($this->baseUrl, '/') . '/v1/checkouts';
         
-        // For COPYandPAY widget, use Visa/MasterCard entity ID
-        // The widget will display all payment methods (MADA, VISA, MASTER) and handle brand selection automatically
-        $entityId = $this->entityId;
+        // For COPYandPAY widget, we need to choose the right entity ID.
+        // Since MADA is primary in Saudi Arabia and requires its own entity ID,
+        // we'll use MADA entity ID. If Visa/MasterCard payments fail, we'll handle that.
+        // 
+        // IMPORTANT: Check with HyperPay support if:
+        // 1. MADA entity ID supports Visa/MasterCard payments
+        // 2. Or if there's a unified entity ID that supports all brands
+        // 3. Or if we need separate checkout flows for each payment method
+        //
+        // For now, prioritizing MADA since it's the primary payment method in Saudi Arabia.
+        // If Visa/MasterCard payments fail, users can contact support or we can implement
+        // a payment method selection before checkout creation.
+        $entityId = $this->entityIdMada;
         
         // Format amount for test server: remove decimals (xx.00 -> xx)
         if ($this->environment === 'test' && isset($data['amount'])) {
@@ -205,9 +225,9 @@ class HyperPayService
         }
         
         // Get appropriate entity ID based on payment brand
-        // For COPYandPAY widget (brand = null), try Visa/MasterCard entity ID first
-        // If that fails with currency/subtype error, try MADA entity ID
-        $entityId = $this->getEntityId($brand);
+        // For COPYandPAY widget (brand = null), use MADA entity ID to match checkout creation
+        // If Visa/MasterCard payment is detected, we'll retry with Visa/MasterCard entity ID
+        $entityId = $brand === null ? $this->entityIdMada : $this->getEntityId($brand);
         
         Log::info('HyperPay: Getting payment status', [
             'url' => $url,
@@ -230,22 +250,49 @@ class HyperPayService
         $paymentBrand = $responseData['paymentBrand'] ?? null;
         $paymentType = $responseData['paymentType'] ?? null;
 
-        // Check if we need to retry with MADA entity ID
-        // This can happen even when HTTP request is successful but result code indicates currency/subtype error
+        // Check if we need to retry with different entity ID
+        // This can happen when:
+        // 1. Using MADA entity ID but payment is Visa/MasterCard (retry with Visa/MasterCard entity ID)
+        // 2. Using Visa/MasterCard entity ID but payment is MADA (retry with MADA entity ID)
         $shouldRetryWithMada = false;
+        $shouldRetryWithVisaMaster = false;
         
-        if ($brand === null && (
-            // Check result code for currency/subtype errors (600.200.500)
-            ($resultCode && str_starts_with($resultCode, '600.200')) ||
-            // Check error description
-            str_contains($errorDescription, 'currency') || 
-            str_contains($errorDescription, 'sub type') ||
-            str_contains($errorDescription, 'country or brand') ||
-            str_contains($errorDescription, 'not configured') ||
+        if ($brand === null) {
             // Check if payment brand is MADA but we used Visa/MasterCard entity ID
-            ($paymentBrand === 'MADA' && $entityId === $this->entityId)
-        )) {
-            $shouldRetryWithMada = true;
+            if ($paymentBrand === 'MADA' && $entityId === $this->entityId) {
+                $shouldRetryWithMada = true;
+            }
+            // Check if payment brand is Visa/MasterCard but we used MADA entity ID
+            elseif (in_array($paymentBrand, ['VISA', 'MASTER', 'MASTERCARD']) && $entityId === $this->entityIdMada) {
+                $shouldRetryWithVisaMaster = true;
+            }
+            // Check result code for currency/subtype errors (600.200.500)
+            elseif ($resultCode && str_starts_with($resultCode, '600.200')) {
+                // If we're using MADA entity ID and get currency error, might be Visa/MasterCard payment
+                if ($entityId === $this->entityIdMada) {
+                    $shouldRetryWithVisaMaster = true;
+                }
+                // If we're using Visa/MasterCard entity ID and get currency error, might be MADA payment
+                elseif ($entityId === $this->entityId) {
+                    $shouldRetryWithMada = true;
+                }
+            }
+            // Check error description for currency/subtype errors
+            elseif (
+                str_contains($errorDescription, 'currency') || 
+                str_contains($errorDescription, 'sub type') ||
+                str_contains($errorDescription, 'country or brand') ||
+                str_contains($errorDescription, 'not configured')
+            ) {
+                // If we're using MADA entity ID and get currency error, might be Visa/MasterCard payment
+                if ($entityId === $this->entityIdMada) {
+                    $shouldRetryWithVisaMaster = true;
+                }
+                // If we're using Visa/MasterCard entity ID and get currency error, might be MADA payment
+                elseif ($entityId === $this->entityId) {
+                    $shouldRetryWithMada = true;
+                }
+            }
         }
 
         if (!$response->successful()) {
@@ -269,7 +316,7 @@ class HyperPayService
             }
             
             // If we get a currency/subtype error and brand is null (COPYandPAY widget),
-            // try with MADA entity ID as the payment might be MADA
+            // try with appropriate entity ID based on payment brand
             if ($shouldRetryWithMada) {
                 Log::info('HyperPay: Currency/subtype error detected (HTTP error), retrying with MADA entity ID', [
                     'resource_path' => $resourcePath,
@@ -297,6 +344,33 @@ class HyperPayService
                     Cache::put($cacheKey, $retryResponseData, 30);
                     return $retryResponseData;
                 }
+            } elseif ($shouldRetryWithVisaMaster) {
+                Log::info('HyperPay: Currency/subtype error detected (HTTP error), retrying with Visa/MasterCard entity ID', [
+                    'resource_path' => $resourcePath,
+                    'error' => $errorDescription,
+                    'result_code' => $resultCode,
+                    'payment_brand' => $paymentBrand,
+                ]);
+                
+                // Retry with Visa/MasterCard entity ID
+                $visaMasterEntityId = $this->entityId;
+                $retryResponse = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $this->accessToken,
+                ])
+                    ->get($url, ['entityId' => $visaMasterEntityId]);
+                
+                $retryResponseData = $retryResponse->json();
+                
+                if ($retryResponse->successful()) {
+                    Log::info('HyperPay: Payment status retrieved with Visa/MasterCard entity ID (after HTTP error)', [
+                        'result_code' => $retryResponseData['result']['code'] ?? null,
+                        'payment_type' => $retryResponseData['paymentType'] ?? null,
+                    ]);
+                    
+                    // Cache successful response
+                    Cache::put($cacheKey, $retryResponseData, 30);
+                    return $retryResponseData;
+                }
             }
             
             Log::error('HyperPay: Get payment status failed', [
@@ -312,7 +386,7 @@ class HyperPayService
         }
 
         // HTTP request successful, but check if result code indicates currency/subtype error
-        // This happens when payment was made with MADA but we're checking with Visa/MasterCard entity ID
+        // Retry with appropriate entity ID based on payment brand
         if ($shouldRetryWithMada) {
             Log::info('HyperPay: Currency/subtype error detected in result code, retrying with MADA entity ID', [
                 'resource_path' => $resourcePath,
@@ -346,6 +420,43 @@ class HyperPayService
             } else {
                 // If retry also fails, log and return original response
                 Log::warning('HyperPay: Retry with MADA entity ID also failed', [
+                    'retry_status' => $retryResponse->status(),
+                    'retry_result_code' => $retryResponseData['result']['code'] ?? null,
+                ]);
+            }
+        } elseif ($shouldRetryWithVisaMaster) {
+            Log::info('HyperPay: Currency/subtype error detected in result code, retrying with Visa/MasterCard entity ID', [
+                'resource_path' => $resourcePath,
+                'result_code' => $resultCode,
+                'error_description' => $errorDescription,
+                'payment_brand' => $paymentBrand,
+                'payment_type' => $paymentType,
+                'entity_id_used' => $entityId,
+            ]);
+            
+            // Retry with Visa/MasterCard entity ID
+            $visaMasterEntityId = $this->entityId;
+            $retryResponse = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $this->accessToken,
+            ])
+                ->get($url, ['entityId' => $visaMasterEntityId]);
+            
+            $retryResponseData = $retryResponse->json();
+            
+            if ($retryResponse->successful()) {
+                $retryResultCode = $retryResponseData['result']['code'] ?? null;
+                Log::info('HyperPay: Payment status retrieved with Visa/MasterCard entity ID (after result code error)', [
+                    'result_code' => $retryResultCode,
+                    'payment_type' => $retryResponseData['paymentType'] ?? null,
+                    'payment_brand' => $retryResponseData['paymentBrand'] ?? null,
+                ]);
+                
+                // Cache successful response
+                Cache::put($cacheKey, $retryResponseData, 30);
+                return $retryResponseData;
+            } else {
+                // If retry also fails, log and return original response
+                Log::warning('HyperPay: Retry with Visa/MasterCard entity ID also failed', [
                     'retry_status' => $retryResponse->status(),
                     'retry_result_code' => $retryResponseData['result']['code'] ?? null,
                 ]);
