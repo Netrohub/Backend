@@ -16,8 +16,6 @@ class Order extends Model
         'seller_id',
         'amount',
         'status',
-        'tap_charge_id',
-        'paylink_transaction_no',
         'paid_at',
         'escrow_hold_at',
         'escrow_release_at',

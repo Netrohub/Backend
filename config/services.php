@@ -35,14 +35,6 @@ return [
         ],
     ],
 
-    // Tap Payments - DEPRECATED for payments (migrated to Paylink)
-    // Still used for withdrawals only
-    'tap' => [
-        'public_key' => env('TAP_PUBLIC_KEY'),
-        'secret_key' => env('TAP_SECRET_KEY'),
-        'webhook_secret' => env('TAP_WEBHOOK_SECRET'),
-        'base_url' => env('TAP_BASE_URL', 'https://api.tap.company/v2'),
-    ],
 
     'persona' => [
         'api_key' => env('PERSONA_API_KEY'),
@@ -87,11 +79,6 @@ return [
         'guild_id' => env('DISCORD_GUILD_ID'), // Server/Guild ID for auto-joining
     ],
 
-    'paylink' => [
-        'base_url' => env('PAYLINK_BASE_URL', 'https://restpilot.paylink.sa'),
-        'api_id' => env('PAYLINK_API_ID'),
-        'secret' => env('PAYLINK_API_SECRET'),
-    ],
 
     'hyperpay' => [
         'base_url' => env('HYPERPAY_BASE_URL', 'https://eu-test.oppwa.com'),

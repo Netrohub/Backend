@@ -79,10 +79,7 @@ Route::prefix('v1')->group(function () {
     // Rate limit: 60 requests per minute per IP to prevent DoS attacks
     Route::middleware('throttle:60,1')->group(function () {
         Route::post('/webhook/persona', [WebhookController::class, 'persona']);
-        Route::post('/webhook/paylink', [WebhookController::class, 'paylink']);
         Route::post('/webhook/hyperpay', [WebhookController::class, 'hyperpay']);
-        // Tap transfer webhook (still used for withdrawals)
-        Route::post('/webhook/tap/transfer', [WebhookController::class, 'tapTransfer']);
     });
 
     // TikTok OAuth Callback (no auth required - receives code from TikTok)

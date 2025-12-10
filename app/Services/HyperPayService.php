@@ -205,14 +205,15 @@ class HyperPayService
         }
         
         // Get appropriate entity ID based on payment brand
-        // For COPYandPAY widget (brand = null), use Visa/MasterCard entity ID (same as checkout)
-        // For specific brands, use the appropriate entity ID
+        // For COPYandPAY widget (brand = null), try Visa/MasterCard entity ID first
+        // If that fails with currency/subtype error, try MADA entity ID
         $entityId = $this->getEntityId($brand);
         
         Log::info('HyperPay: Getting payment status', [
             'url' => $url,
             'resource_path' => $resourcePath,
             'entity_id' => $entityId,
+            'brand' => $brand,
             'cache_key' => $cacheKey,
         ]);
 
@@ -248,11 +249,46 @@ class HyperPayService
                 throw new \Exception('HyperPay rate limit exceeded. Too many requests. Please try again later.');
             }
             
+            // If we get a currency/subtype error and brand is null (COPYandPAY widget),
+            // try with MADA entity ID as the payment might be MADA
+            if ($brand === null && (
+                str_contains($errorDescription, 'currency') || 
+                str_contains($errorDescription, 'sub type') ||
+                str_contains($errorDescription, 'country or brand') ||
+                str_contains($errorDescription, 'not configured')
+            )) {
+                Log::info('HyperPay: Currency/subtype error detected, retrying with MADA entity ID', [
+                    'resource_path' => $resourcePath,
+                    'error' => $errorDescription,
+                ]);
+                
+                // Retry with MADA entity ID
+                $madaEntityId = $this->entityIdMada;
+                $retryResponse = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $this->accessToken,
+                ])
+                    ->get($url, ['entityId' => $madaEntityId]);
+                
+                $retryResponseData = $retryResponse->json();
+                
+                if ($retryResponse->successful()) {
+                    Log::info('HyperPay: Payment status retrieved with MADA entity ID', [
+                        'result_code' => $retryResponseData['result']['code'] ?? null,
+                        'payment_type' => $retryResponseData['paymentType'] ?? null,
+                    ]);
+                    
+                    // Cache successful response
+                    Cache::put($cacheKey, $retryResponseData, 30);
+                    return $retryResponseData;
+                }
+            }
+            
             Log::error('HyperPay: Get payment status failed', [
                 'status' => $response->status(),
                 'result_code' => $resultCode,
                 'error' => $responseData,
                 'resource_path' => $resourcePath,
+                'entity_id_used' => $entityId,
             ]);
             
             $errorMessage = $errorDescription;
