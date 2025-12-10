@@ -19,98 +19,16 @@ class AuthController extends Controller
 {
     public function register(Request $request)
     {
-        try {
-            $validated = $request->validate([
-                'name' => 'required|string|max:255',
-                'email' => 'required|string|email|max:255|unique:users',
-                'password' => [
-                    'required',
-                    'string',
-                    'confirmed',
-                    Password::min(8)
-                        ->mixedCase()       // Requires uppercase and lowercase
-                        ->numbers()         // Requires at least one number
-                        ->symbols()         // Requires at least one special character
-                        ->uncompromised()   // Check against data breaches
-                ],
-                'phone' => 'nullable|string|max:20',
-            ]);
-
-            // Generate unique username from name
-            $baseUsername = $validated['name'];
-            $username = $baseUsername;
-            $counter = 1;
-            
-            // Check if username exists and append number if needed
-            while (User::where('username', $username)->exists()) {
-                $username = $baseUsername . $counter;
-                $counter++;
-                
-                // Prevent infinite loop (max 9999 attempts)
-                if ($counter > 9999) {
-                    // Fallback: use email prefix + random number
-                    $emailPrefix = explode('@', $validated['email'])[0];
-                    $username = $emailPrefix . rand(1000, 9999);
-                    break;
-                }
-            }
-
-            $user = User::create([
-                'name' => $validated['name'],
-                'username' => $username, // Unique username generated from name
-                'email' => strtolower($validated['email']), // Store email in lowercase
-                'password' => Hash::make($validated['password']),
-                'phone' => $validated['phone'] ?? null,
-            ]);
-
-            // Create wallet for new user if it doesn't exist
-            if (!$user->wallet) {
-                Wallet::create([
-                    'user_id' => $user->id,
-                    'available_balance' => 0,
-                    'on_hold_balance' => 0,
-                    'withdrawn_total' => 0,
-                ]);
-            }
-
-            // Send email verification notification
-            $user->sendEmailVerificationNotification();
-
-            $token = $user->createToken('auth-token')->plainTextToken;
-
-            return response()->json([
-                'user' => $user->load('wallet'),
-                'token' => $token,
-                'message' => 'تم إنشاء الحساب بنجاح. تحقق من بريدك الإلكتروني لتفعيل الحساب.',
-            ], 201);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            throw $e;
-        } catch (\Exception $e) {
-            Log::error('Registration error: ' . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-            ]);
-            
-            // Provide more specific error message without exposing sensitive details
-            $errorCode = 'REGISTRATION_FAILED';
-            $userMessage = MessageHelper::REGISTRATION_ERROR;
-            
-            // Check for common error types to provide better feedback
-            if (str_contains($e->getMessage(), 'SQLSTATE') || str_contains($e->getMessage(), 'database')) {
-                $errorCode = 'DATABASE_ERROR';
-                $userMessage = 'Unable to complete registration. Please try again later.';
-            } elseif (str_contains($e->getMessage(), 'email') || str_contains($e->getMessage(), 'unique')) {
-                $errorCode = 'EMAIL_EXISTS';
-                // This should be caught by validation, but handle gracefully
-            }
-            
-            return response()->json([
-                'message' => $userMessage,
-                'error_code' => $errorCode,
-                'error' => \App\Helpers\SecurityHelper::getSafeErrorMessage($e)
-            ], 500);
-        }
+        // Discord connection is now mandatory for new registrations
+        // Email/password registration is disabled - users must register via Discord OAuth
+        return response()->json([
+            'message' => 'Discord connection is required for registration. Please use "Register with Discord" button.',
+            'error_code' => 'DISCORD_REQUIRED',
+            'discord_required' => true,
+        ], 400);
+        
+        // Old email/password registration code disabled - Discord is now mandatory
+        // Users must register via Discord OAuth only
     }
 
     public function login(Request $request)
